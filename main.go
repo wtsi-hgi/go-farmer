@@ -4,10 +4,13 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	es "github.com/elastic/go-elasticsearch/v7"
 	"gopkg.in/yaml.v3"
 )
+
+const index = "user-data-ssg-isg-lsf-analytics-*"
 
 type Config struct {
 	Elastic struct {
@@ -40,16 +43,34 @@ func main() {
 		Password: c.Elastic.Password,
 	}
 
-	es, err := es.NewClient(cfg)
+	client, err := es.NewClient(cfg)
 	if err != nil {
 		log.Fatalf("%s\n", err)
 	}
 
-	res, err := es.Info()
+	res, err := client.Info()
 	if err != nil {
 		log.Fatalf("Error getting response: %s", err)
 	}
 
 	defer res.Body.Close()
 	log.Println(res)
+
+	// es.Search().
+	// 	Index("").
+	// 	Request(&search.Request{
+	// 		Query: &types.Query{MatchAll: &types.MatchAllQuery{}},
+	// 	}).
+	// Do(context.TODO())
+
+	query := `{ "query": { "match_all": {} } }`
+	x, err := client.Search(
+		client.Search.WithIndex(index),
+		client.Search.WithBody(strings.NewReader(query)),
+	)
+	if err != nil {
+		log.Fatalf("Error doing search: %s", err)
+	}
+
+	fmt.Printf("%+v\n", x)
 }
