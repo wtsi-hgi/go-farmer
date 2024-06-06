@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"time"
 
 	es "github.com/elastic/go-elasticsearch/v7"
@@ -18,11 +17,70 @@ const index = "user-data-ssg-isg-lsf-analytics-*"
 const MaxSize = 10000
 const scrollTime = 1 * time.Minute
 
-const bomQuery = `{"aggs":{"stats":{"multi_terms":{"terms":[{"field":"ACCOUNTING_NAME"},{"field":"NUM_EXEC_PROCS"},{"field":"Job"}],"size":1000},"aggs":{"cpu_avail_sec":{"sum":{"field":"AVAIL_CPU_TIME_SEC"}},"cpu_wasted_sec":{"sum":{"field":"WASTED_CPU_SECONDS"}},"mem_avail_mb_sec":{"sum":{"field":"MEM_REQUESTED_MB_SEC"}},"mem_wasted_mb_sec":{"sum":{"field":"WASTED_MB_SECONDS"}},"wasted_cost":{"scripted_metric":{"init_script":"state.costs = []","map_script":"double cpu_cost = doc.WASTED_CPU_SECONDS.value * params.cpu_second; double mem_cost = doc.WASTED_MB_SECONDS.value * params.mb_second; state.costs.add(Math.max(cpu_cost, mem_cost))","combine_script":"double total = 0; for (t in state.costs) { total += t } return total","reduce_script":"double total = 0; for (a in states) { total += a } return total","params":{"cpu_second":7.0556e-07,"mb_second":5.8865e-11}}}}}},"size":0,"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-06-04T00:00:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}},{"match_phrase":{"BOM":"Human Genetics"}}]}}}`
-const teamsQuery = `{"size":10000,"sort":["_doc"],"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-06-04T00:00:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}},{"match_phrase":{"BOM":"Human Genetics"}},{"match_phrase":{"ACCOUNTING_NAME":"hgi"}}]}}}`
+type Query struct {
+	Size  int          `json:"size"`
+	Slice *QuerySlice  `json:"slice,omitempty"`
+	Aggs  *Aggs        `json:"aggs,omitempty"`
+	Query *QueryFilter `json:"query,omitempty"`
+	Sort  []string     `json:"sort,omitempty"`
+}
 
-// const teamsQuerySlice1 = `{"slice":{"id":0,"max":2},"size":10000,"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-06-04T00:00:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}},{"match_phrase":{"BOM":"Human Genetics"}},{"match_phrase":{"ACCOUNTING_NAME":"hgi"}}]}}}`
-// const teamsQuerySlice2 = `{"slice":{"id":1,"max":2},"size":10000,"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-06-04T00:00:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}},{"match_phrase":{"BOM":"Human Genetics"}},{"match_phrase":{"ACCOUNTING_NAME":"hgi"}}]}}}`
+type QuerySlice struct {
+	ID  int `json:"id"`
+	Max int `json:"max"`
+}
+
+type Aggs struct {
+	Stats AggsStats `json:"stats"`
+}
+
+type AggsStats struct {
+	MultiTerms MultiTerms           `json:"multi_terms"`
+	Aggs       map[string]AggsField `json:"aggs"`
+}
+
+type MultiTerms struct {
+	Terms []Field `json:"terms"`
+	Size  int     `json:"size"`
+}
+
+type Field struct {
+	Field string `json:"field"`
+}
+
+type AggsField struct {
+	Sum            *Field          `json:"sum,omitempty"`
+	ScriptedMetric *ScriptedMetric `json:"scripted_metric,omitempty"`
+}
+
+type ScriptedMetric struct {
+	InitScript    string      `json:"init_script"`
+	MapScript     string      `json:"map_script"`
+	CombineScript string      `json:"combine_script"`
+	ReduceScript  string      `json:"reduce_script"`
+	Params        interface{} `json:"params"`
+}
+
+type QueryFilter struct {
+	Bool QFBool `json:"bool"`
+}
+
+type QFBool struct {
+	Filter Filter `json:"filter"`
+}
+
+type Filter []map[string]map[string]interface{}
+
+func (q *Query) AsBody() (*bytes.Reader, error) {
+	queryBytes, err := json.Marshal(q)
+	if err != nil {
+		return nil, err
+	}
+
+	// fmt.Printf("query: %s\n", string(queryBytes))
+
+	return bytes.NewReader(queryBytes), nil
+}
 
 type Config struct {
 	Elastic struct {
@@ -140,6 +198,63 @@ func main() {
 	}
 
 	t := time.Now()
+
+	bomQuery := &Query{
+		Aggs: &Aggs{
+			Stats: AggsStats{
+				MultiTerms: MultiTerms{
+					Terms: []Field{
+						{Field: "ACCOUNTING_NAME"},
+						{Field: "NUM_EXEC_PROCS"},
+						{Field: "Job"},
+					},
+					Size: 1000,
+				},
+				Aggs: map[string]AggsField{
+					"cpu_avail_sec": {
+						Sum: &Field{Field: "AVAIL_CPU_TIME_SEC"},
+					},
+					"cpu_wasted_sec": {
+						Sum: &Field{Field: "WASTED_CPU_SECONDS"},
+					},
+					"mem_avail_mb_sec": {
+						Sum: &Field{Field: "MEM_REQUESTED_MB_SEC"},
+					},
+					"mem_wasted_mb_sec": {
+						Sum: &Field{Field: "WASTED_MB_SECONDS"},
+					},
+					"wasted_cost": {
+						ScriptedMetric: &ScriptedMetric{
+							InitScript:    "state.costs = []",
+							MapScript:     "double cpu_cost = doc.WASTED_CPU_SECONDS.value * params.cpu_second; double mem_cost = doc.WASTED_MB_SECONDS.value * params.mb_second; state.costs.add(Math.max(cpu_cost, mem_cost))",
+							CombineScript: "double total = 0; for (t in state.costs) { total += t } return total",
+							ReduceScript:  "double total = 0; for (a in states) { total += a } return total",
+							Params: map[string]float64{
+								"cpu_second": 7.0556e-07,
+								"mb_second":  5.8865e-11,
+							},
+						},
+					},
+				},
+			},
+		},
+		Query: &QueryFilter{
+			Bool: QFBool{
+				Filter: Filter{
+					{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
+					{"range": map[string]interface{}{
+						"timestamp": map[string]string{
+							"lte":    "2024-06-04T00:00:00Z",
+							"gte":    "2024-05-04T00:00:00Z",
+							"format": "strict_date_optional_time",
+						},
+					}},
+					{"match_phrase": map[string]interface{}{"BOM": "Human Genetics"}},
+				},
+			},
+		},
+	}
+
 	result, err := Search(client, index, bomQuery)
 	if err != nil {
 		log.Fatalf("Error searching: %s", err)
@@ -154,8 +269,21 @@ func main() {
 	}
 	fmt.Printf("took: %s\n\n", time.Since(t))
 
+	filter := Filter{
+		{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
+		{"range": map[string]interface{}{
+			"timestamp": map[string]string{
+				"lte":    "2024-06-04T00:00:00Z",
+				"gte":    "2024-05-04T00:00:00Z",
+				"format": "strict_date_optional_time",
+			},
+		}},
+		{"match_phrase": map[string]interface{}{"BOM": "Human Genetics"}},
+		{"match_phrase": map[string]interface{}{"ACCOUNTING_NAME": "hgi"}},
+	}
+
 	t = time.Now()
-	result, err = Scroll(client, index, teamsQuery)
+	result, err = Scroll(client, index, filter)
 	if err != nil {
 		log.Fatalf("Error searching: %s", err)
 	}
@@ -169,44 +297,17 @@ func main() {
 		fmt.Printf("first agg: %+v\n", result.Aggregations.Stats.Buckets[0])
 	}
 	fmt.Printf("took: %s\n\n", time.Since(t))
-
-	// t = time.Now()
-	// result, err = Scroll(client, index, teamsQuerySlice1)
-	// if err != nil {
-	// 	log.Fatalf("Error searching: %s", err)
-	// }
-
-	// if len(result.HitSet.Hits) > 0 {
-	// 	fmt.Printf("num hits: %+v\n", len(result.HitSet.Hits))
-	// 	fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0])
-	// }
-
-	// if len(result.Aggregations.Stats.Buckets) > 0 {
-	// 	fmt.Printf("first agg: %+v\n", result.Aggregations.Stats.Buckets[0])
-	// }
-	// fmt.Printf("took: %s\n\n", time.Since(t))
-
-	// t = time.Now()
-	// result, err = Scroll(client, index, teamsQuerySlice2)
-	// if err != nil {
-	// 	log.Fatalf("Error searching: %s", err)
-	// }
-
-	// if len(result.HitSet.Hits) > 0 {
-	// 	fmt.Printf("num hits: %+v\n", len(result.HitSet.Hits))
-	// 	fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0])
-	// }
-
-	// if len(result.Aggregations.Stats.Buckets) > 0 {
-	// 	fmt.Printf("first agg: %+v\n", result.Aggregations.Stats.Buckets[0])
-	// }
-	// fmt.Printf("took: %s\n\n", time.Since(t))
 }
 
-func Search(client *es.Client, index string, query string) (*Result, error) {
+func Search(client *es.Client, index string, query *Query) (*Result, error) {
+	qbody, err := query.AsBody()
+	if err != nil {
+		return nil, err
+	}
+
 	resp, err := client.Search(
 		client.Search.WithIndex(index),
-		client.Search.WithBody(strings.NewReader(query)),
+		client.Search.WithBody(qbody),
 	)
 	if err != nil {
 		return nil, err
@@ -239,10 +340,21 @@ func parseResponse(resp *esapi.Response) (*Result, error) {
 	return &result, nil
 }
 
-func Scroll(client *es.Client, index string, query string) (*Result, error) {
+func Scroll(client *es.Client, index string, filter Filter) (*Result, error) {
+	query := &Query{
+		Size:  MaxSize,
+		Sort:  []string{"_doc"},
+		Query: &QueryFilter{Bool: QFBool{Filter: filter}},
+	}
+
+	qbody, err := query.AsBody()
+	if err != nil {
+		return nil, err
+	}
+
 	resp, err := client.Search(
 		client.Search.WithIndex(index),
-		client.Search.WithBody(strings.NewReader(query)),
+		client.Search.WithBody(qbody),
 		client.Search.WithSize(MaxSize),
 		client.Search.WithScroll(scrollTime),
 	)
@@ -272,6 +384,8 @@ func Scroll(client *es.Client, index string, query string) (*Result, error) {
 	if total <= MaxSize {
 		return result, nil
 	}
+
+	// g, ctx := errgroup.WithContext(context.TODO())
 
 	for keepScrolling := true; keepScrolling; keepScrolling = len(result.HitSet.Hits) < total {
 		err = scroll(client, result)
