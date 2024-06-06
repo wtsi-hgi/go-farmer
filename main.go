@@ -16,10 +16,13 @@ import (
 
 const index = "user-data-ssg-isg-lsf-analytics-*"
 const MaxSize = 10000
-const scrollTime = 5 * time.Minute
+const scrollTime = 1 * time.Minute
 
 const bomQuery = `{"aggs":{"stats":{"multi_terms":{"terms":[{"field":"ACCOUNTING_NAME"},{"field":"NUM_EXEC_PROCS"},{"field":"Job"}],"size":1000},"aggs":{"cpu_avail_sec":{"sum":{"field":"AVAIL_CPU_TIME_SEC"}},"cpu_wasted_sec":{"sum":{"field":"WASTED_CPU_SECONDS"}},"mem_avail_mb_sec":{"sum":{"field":"MEM_REQUESTED_MB_SEC"}},"mem_wasted_mb_sec":{"sum":{"field":"WASTED_MB_SECONDS"}},"wasted_cost":{"scripted_metric":{"init_script":"state.costs = []","map_script":"double cpu_cost = doc.WASTED_CPU_SECONDS.value * params.cpu_second; double mem_cost = doc.WASTED_MB_SECONDS.value * params.mb_second; state.costs.add(Math.max(cpu_cost, mem_cost))","combine_script":"double total = 0; for (t in state.costs) { total += t } return total","reduce_script":"double total = 0; for (a in states) { total += a } return total","params":{"cpu_second":7.0556e-07,"mb_second":5.8865e-11}}}}}},"size":0,"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-06-04T00:00:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}},{"match_phrase":{"BOM":"Human Genetics"}}]}}}`
-const teamsQuery = `{"size":10000,"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-06-04T00:00:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}},{"match_phrase":{"BOM":"Human Genetics"}},{"match_phrase":{"ACCOUNTING_NAME":"hgi"}}]}}}`
+const teamsQuery = `{"size":10000,"sort":["_doc"],"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-06-04T00:00:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}},{"match_phrase":{"BOM":"Human Genetics"}},{"match_phrase":{"ACCOUNTING_NAME":"hgi"}}]}}}`
+
+// const teamsQuerySlice1 = `{"slice":{"id":0,"max":2},"size":10000,"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-06-04T00:00:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}},{"match_phrase":{"BOM":"Human Genetics"}},{"match_phrase":{"ACCOUNTING_NAME":"hgi"}}]}}}`
+// const teamsQuerySlice2 = `{"slice":{"id":1,"max":2},"size":10000,"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-06-04T00:00:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}},{"match_phrase":{"BOM":"Human Genetics"}},{"match_phrase":{"ACCOUNTING_NAME":"hgi"}}]}}}`
 
 type Config struct {
 	Elastic struct {
@@ -166,6 +169,38 @@ func main() {
 		fmt.Printf("first agg: %+v\n", result.Aggregations.Stats.Buckets[0])
 	}
 	fmt.Printf("took: %s\n\n", time.Since(t))
+
+	// t = time.Now()
+	// result, err = Scroll(client, index, teamsQuerySlice1)
+	// if err != nil {
+	// 	log.Fatalf("Error searching: %s", err)
+	// }
+
+	// if len(result.HitSet.Hits) > 0 {
+	// 	fmt.Printf("num hits: %+v\n", len(result.HitSet.Hits))
+	// 	fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0])
+	// }
+
+	// if len(result.Aggregations.Stats.Buckets) > 0 {
+	// 	fmt.Printf("first agg: %+v\n", result.Aggregations.Stats.Buckets[0])
+	// }
+	// fmt.Printf("took: %s\n\n", time.Since(t))
+
+	// t = time.Now()
+	// result, err = Scroll(client, index, teamsQuerySlice2)
+	// if err != nil {
+	// 	log.Fatalf("Error searching: %s", err)
+	// }
+
+	// if len(result.HitSet.Hits) > 0 {
+	// 	fmt.Printf("num hits: %+v\n", len(result.HitSet.Hits))
+	// 	fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0])
+	// }
+
+	// if len(result.Aggregations.Stats.Buckets) > 0 {
+	// 	fmt.Printf("first agg: %+v\n", result.Aggregations.Stats.Buckets[0])
+	// }
+	// fmt.Printf("took: %s\n\n", time.Since(t))
 }
 
 func Search(client *es.Client, index string, query string) (*Result, error) {
@@ -220,15 +255,26 @@ func Scroll(client *es.Client, index string, query string) (*Result, error) {
 		return nil, err
 	}
 
+	defer func() {
+		scrollIDBody, err := scrollIDBody(result.ScrollID)
+		if err != nil {
+			log.Fatalf("scrollIDBody failed: %s\n", err)
+			return
+		}
+
+		_, err = client.ClearScroll(client.ClearScroll.WithBody(scrollIDBody))
+		if err != nil {
+			log.Fatalf("clearscroll failed: %s\n", err)
+		}
+	}()
+
 	total := result.HitSet.Total.Value
 	if total <= MaxSize {
 		return result, nil
 	}
 
-	scrollID := result.ScrollID
-
 	for keepScrolling := true; keepScrolling; keepScrolling = len(result.HitSet.Hits) < total {
-		err = scroll(client, scrollID, result)
+		err = scroll(client, result)
 		if err != nil {
 			return nil, err
 		}
@@ -237,14 +283,23 @@ func Scroll(client *es.Client, index string, query string) (*Result, error) {
 	return result, nil
 }
 
-func scroll(client *es.Client, scrollID string, result *Result) error {
+func scrollIDBody(scrollID string) (*bytes.Buffer, error) {
 	scrollBytes, err := json.Marshal(&map[string]string{"scroll_id": scrollID})
+	if err != nil {
+		return nil, err
+	}
+
+	return bytes.NewBuffer(scrollBytes), nil
+}
+
+func scroll(client *es.Client, result *Result) error {
+	scrollIDBody, err := scrollIDBody(result.ScrollID)
 	if err != nil {
 		return err
 	}
 
 	resp, err := client.Scroll(
-		client.Scroll.WithBody(bytes.NewBuffer(scrollBytes)),
+		client.Scroll.WithBody(scrollIDBody),
 		client.Scroll.WithScroll(scrollTime),
 	)
 	if err != nil {
@@ -257,6 +312,7 @@ func scroll(client *es.Client, scrollID string, result *Result) error {
 	}
 
 	result.HitSet.Hits = append(result.HitSet.Hits, scrollResult.HitSet.Hits...)
+	result.ScrollID = scrollResult.ScrollID
 
 	return nil
 }
