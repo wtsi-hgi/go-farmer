@@ -7,4 +7,8 @@ require (
 	golang.org/x/sync v0.7.0
 )
 
-require gopkg.in/yaml.v3 v3.0.1
+require (
+	github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13
+	github.com/hashicorp/golang-lru/v2 v2.0.7
+	gopkg.in/yaml.v3 v3.0.1
+)

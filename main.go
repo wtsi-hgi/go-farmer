@@ -10,8 +10,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dgryski/go-farm"
 	es "github.com/elastic/go-elasticsearch/v7"
 	"github.com/elastic/go-elasticsearch/v7/esapi"
+	lru "github.com/hashicorp/golang-lru/v2"
 	"golang.org/x/sync/errgroup"
 	"gopkg.in/yaml.v3"
 )
@@ -21,6 +23,7 @@ const (
 	maxSize    = 10000
 	maxSlices  = 2
 	scrollTime = 1 * time.Minute
+	cacheSize  = 128
 )
 
 type Query struct {
@@ -78,7 +81,7 @@ type QFBool struct {
 type Filter []map[string]map[string]interface{}
 
 func (q *Query) AsBody() (*bytes.Reader, error) {
-	queryBytes, err := json.Marshal(q)
+	queryBytes, err := q.toJSON()
 	if err != nil {
 		return nil, err
 	}
@@ -86,6 +89,21 @@ func (q *Query) AsBody() (*bytes.Reader, error) {
 	// fmt.Printf("query: %s\n", string(queryBytes))
 
 	return bytes.NewReader(queryBytes), nil
+}
+
+func (q *Query) toJSON() ([]byte, error) {
+	return json.Marshal(q)
+}
+
+func (q *Query) CacheKey() (string, error) {
+	queryBytes, err := q.toJSON()
+	if err != nil {
+		return "", err
+	}
+
+	l, h := farm.Hash128(queryBytes)
+
+	return fmt.Sprintf("%016x%016x", l, h), nil
 }
 
 type Config struct {
@@ -203,6 +221,11 @@ func main() {
 		log.Fatalf("%s\n", err)
 	}
 
+	l, err := lru.New[string, *Result](cacheSize)
+	if err != nil {
+		log.Fatalf("%s\n", err)
+	}
+
 	t := time.Now()
 
 	bomQuery := &Query{
@@ -261,7 +284,7 @@ func main() {
 		},
 	}
 
-	result, err := Search(client, index, bomQuery)
+	result, err := Search(l, client, index, bomQuery)
 	if err != nil {
 		log.Fatalf("Error searching: %s", err)
 	}
@@ -289,7 +312,42 @@ func main() {
 	}
 
 	t = time.Now()
-	result, err = Scroll(client, index, filter)
+	result, err = Scroll(l, client, index, filter)
+	if err != nil {
+		log.Fatalf("Error searching: %s", err)
+	}
+
+	if result == nil {
+		return
+	}
+
+	if len(result.HitSet.Hits) > 0 {
+		fmt.Printf("num hits: %+v\n", len(result.HitSet.Hits))
+		fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0])
+	}
+
+	if len(result.Aggregations.Stats.Buckets) > 0 {
+		fmt.Printf("first agg: %+v\n", result.Aggregations.Stats.Buckets[0])
+	}
+	fmt.Printf("took: %s\n\n", time.Since(t))
+
+	t = time.Now()
+	result, err = Search(l, client, index, bomQuery)
+	if err != nil {
+		log.Fatalf("Error searching: %s", err)
+	}
+
+	if len(result.HitSet.Hits) > 0 {
+		fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0])
+	}
+
+	if len(result.Aggregations.Stats.Buckets) > 0 {
+		fmt.Printf("first agg: %+v\n", result.Aggregations.Stats.Buckets[0])
+	}
+	fmt.Printf("took: %s\n\n", time.Since(t))
+
+	t = time.Now()
+	result, err = Scroll(l, client, index, filter)
 	if err != nil {
 		log.Fatalf("Error searching: %s", err)
 	}
@@ -309,7 +367,17 @@ func main() {
 	fmt.Printf("took: %s\n\n", time.Since(t))
 }
 
-func Search(client *es.Client, index string, query *Query) (*Result, error) {
+func Search(l *lru.Cache[string, *Result], client *es.Client, index string, query *Query) (*Result, error) {
+	cacheKey, err := query.CacheKey()
+	if err != nil {
+		return nil, err
+	}
+
+	result, ok := l.Get(cacheKey)
+	if ok {
+		return result, nil
+	}
+
 	qbody, err := query.AsBody()
 	if err != nil {
 		return nil, err
@@ -323,7 +391,14 @@ func Search(client *es.Client, index string, query *Query) (*Result, error) {
 		return nil, err
 	}
 
-	return parseResponse(resp)
+	result, err = parseResponse(resp)
+	if err != nil {
+		return nil, err
+	}
+
+	l.Add(cacheKey, result)
+
+	return result, nil
 }
 
 func parseResponse(resp *esapi.Response) (*Result, error) {
@@ -351,8 +426,20 @@ func parseResponse(resp *esapi.Response) (*Result, error) {
 	return &result, nil
 }
 
-func Scroll(client *es.Client, index string, filter Filter) (*Result, error) {
-	result := &Result{}
+func Scroll(l *lru.Cache[string, *Result], client *es.Client, index string, filter Filter) (*Result, error) {
+	query := &Query{Query: &QueryFilter{Bool: QFBool{Filter: filter}}}
+
+	cacheKey, err := query.CacheKey()
+	if err != nil {
+		return nil, err
+	}
+
+	result, ok := l.Get(cacheKey)
+	if ok {
+		return result, nil
+	}
+
+	result = &Result{}
 
 	g, ctx := errgroup.WithContext(context.TODO())
 	hitSets := make(chan HitSet)
@@ -404,6 +491,8 @@ func Scroll(client *es.Client, index string, filter Filter) (*Result, error) {
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
+
+	l.Add(cacheKey, result)
 
 	return result, nil
 }
