@@ -2,20 +2,26 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
+	"sync"
 	"time"
 
 	es "github.com/elastic/go-elasticsearch/v7"
 	"github.com/elastic/go-elasticsearch/v7/esapi"
+	"golang.org/x/sync/errgroup"
 	"gopkg.in/yaml.v3"
 )
 
-const index = "user-data-ssg-isg-lsf-analytics-*"
-const MaxSize = 10000
-const scrollTime = 1 * time.Minute
+const (
+	index      = "user-data-ssg-isg-lsf-analytics-*"
+	maxSize    = 10000
+	maxSlices  = 2
+	scrollTime = 1 * time.Minute
+)
 
 type Query struct {
 	Size  int          `json:"size"`
@@ -288,6 +294,10 @@ func main() {
 		log.Fatalf("Error searching: %s", err)
 	}
 
+	if result == nil {
+		return
+	}
+
 	if len(result.HitSet.Hits) > 0 {
 		fmt.Printf("num hits: %+v\n", len(result.HitSet.Hits))
 		fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0])
@@ -335,15 +345,77 @@ func parseResponse(resp *esapi.Response) (*Result, error) {
 		return nil, err
 	}
 
-	fmt.Printf("total: %d; hits: %d; aggs: %d\n", result.HitSet.Total.Value, len(result.HitSet.Hits), len(result.Aggregations.Stats.Buckets))
+	fmt.Printf("total: %d; hits: %d; aggs: %d\n",
+		result.HitSet.Total.Value, len(result.HitSet.Hits), len(result.Aggregations.Stats.Buckets))
 
 	return &result, nil
 }
 
 func Scroll(client *es.Client, index string, filter Filter) (*Result, error) {
+	result := &Result{}
+
+	g, ctx := errgroup.WithContext(context.TODO())
+	hitSets := make(chan HitSet)
+
+	var wg sync.WaitGroup
+
+	for i := 0; i < maxSlices; i++ {
+		wg.Add(1)
+		sliceIndex := i
+
+		g.Go(func() error {
+			defer wg.Done()
+
+			sliceResult, err := slice(sliceIndex, client, index, filter)
+			if err != nil {
+				return err
+			}
+
+			select {
+			case hitSets <- sliceResult.HitSet:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+
+			return nil
+		})
+	}
+
+	go func() {
+		wg.Wait()
+		close(hitSets)
+	}()
+
+	g.Go(func() error {
+		for hitSet := range hitSets {
+			result.HitSet.Hits = append(result.HitSet.Hits, hitSet.Hits...)
+			result.HitSet.Total.Value += hitSet.Total.Value
+
+			select {
+			default:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
+		return nil
+	})
+
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+func slice(sliceIndex int, client *es.Client, index string, filter Filter) (*Result, error) {
 	query := &Query{
-		Size:  MaxSize,
-		Sort:  []string{"_doc"},
+		Size: maxSize,
+		Sort: []string{"_doc"},
+		Slice: &QuerySlice{
+			ID:  sliceIndex,
+			Max: maxSlices,
+		},
 		Query: &QueryFilter{Bool: QFBool{Filter: filter}},
 	}
 
@@ -355,7 +427,7 @@ func Scroll(client *es.Client, index string, filter Filter) (*Result, error) {
 	resp, err := client.Search(
 		client.Search.WithIndex(index),
 		client.Search.WithBody(qbody),
-		client.Search.WithSize(MaxSize),
+		client.Search.WithSize(maxSize),
 		client.Search.WithScroll(scrollTime),
 	)
 	if err != nil {
@@ -381,11 +453,9 @@ func Scroll(client *es.Client, index string, filter Filter) (*Result, error) {
 	}()
 
 	total := result.HitSet.Total.Value
-	if total <= MaxSize {
+	if total <= maxSize {
 		return result, nil
 	}
-
-	// g, ctx := errgroup.WithContext(context.TODO())
 
 	for keepScrolling := true; keepScrolling; keepScrolling = len(result.HitSet.Hits) < total {
 		err = scroll(client, result)
