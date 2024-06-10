@@ -153,6 +153,7 @@ type Details struct {
 	// EXEC_HOSTNAME                  []string
 	// Exit_Info                      int
 	// Exitreason                     string
+	// JOB_ID                         int
 	// JOB_EXIT_STATUS                int
 	Job string
 	// Job_Efficiency_Percent         float64
@@ -175,6 +176,7 @@ type Details struct {
 	// RAW_WASTED_CPU_SECONDS         float64
 	// RAW_WASTED_MB_SECONDS          float64
 	// RUN_TIME_SEC                   int
+	// timestamp                      int
 	USER_NAME          string
 	WASTED_CPU_SECONDS float64
 	WASTED_MB_SECONDS  float64
@@ -417,6 +419,8 @@ func parseResponse(resp *esapi.Response) (*Result, error) {
 	// bodyBytes, _ := io.ReadAll(resp.Body)
 	// jsonHits, _ := json.Marshal(string(bodyBytes))
 	// fmt.Println(string(jsonHits))
+	// bodyBytes, _ := io.ReadAll(resp.Body)
+	// fmt.Println(string(bodyBytes))
 
 	var result Result
 
@@ -509,7 +513,7 @@ func slice(sliceIndex int, client *es.Client, index string, filter Filter) (*Res
 		Sort:           []string{"_doc"},
 		TrackTotalHits: true,
 		Slice: &QuerySlice{
-			// Field: "END_TIME",
+			// Field: "JOB_ID",
 			ID:  sliceIndex,
 			Max: maxSlices,
 		},
