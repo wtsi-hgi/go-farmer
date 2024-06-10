@@ -141,7 +141,8 @@ type Details struct {
 	// EXEC_HOSTNAME                  []string
 	// Exit_Info                      int
 	// Exitreason                     string
-	JOB_ID int
+	// JOB_ID          int
+	// JOB_ARRAY_INDEX int
 	// JOB_EXIT_STATUS                int
 	JOB_NAME string
 	Job      string
@@ -165,6 +166,7 @@ type Details struct {
 	// RAW_WASTED_CPU_SECONDS         float64
 	// RAW_WASTED_MB_SECONDS          float64
 	RUN_TIME_SEC int
+	// SUBMIT_TIME  int
 	// timestamp                      int
 	USER_NAME          string
 	WASTED_CPU_SECONDS float64
@@ -352,13 +354,6 @@ func main() {
 	if len(result.HitSet.Hits) > 0 {
 		fmt.Printf("num hits: %+v\n", len(result.HitSet.Hits))
 		fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0])
-
-		bids := make(map[int]bool)
-		for _, hit := range result.HitSet.Hits {
-			bids[hit.Details.JOB_ID] = true
-		}
-
-		fmt.Printf("unique job ids: %d\n", len(bids))
 	}
 
 	if len(result.Aggregations.Stats.Buckets) > 0 {
@@ -430,9 +425,8 @@ func parseResponse(resp *esapi.Response) (*Result, error) {
 
 func Scroll(l *lru.Cache[string, *Result], client *es.Client, index string, filter Filter) (*Result, error) {
 	query := &Query{
-		Size: maxSize,
-		Sort: []string{"_doc"},
-		// Sort:           []string{"JOB_ID"},
+		Size:  maxSize,
+		Sort:  []string{"_doc"},
 		Query: &QueryFilter{Bool: QFBool{Filter: filter}},
 	}
 
