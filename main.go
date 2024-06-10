@@ -27,16 +27,18 @@ const (
 )
 
 type Query struct {
-	Size  int          `json:"size"`
-	Slice *QuerySlice  `json:"slice,omitempty"`
-	Aggs  *Aggs        `json:"aggs,omitempty"`
-	Query *QueryFilter `json:"query,omitempty"`
-	Sort  []string     `json:"sort,omitempty"`
+	Size           int          `json:"size"`
+	Slice          *QuerySlice  `json:"slice,omitempty"`
+	Aggs           *Aggs        `json:"aggs,omitempty"`
+	Query          *QueryFilter `json:"query,omitempty"`
+	Sort           []string     `json:"sort,omitempty"`
+	TrackTotalHits bool         `json:"track_total_hits"`
 }
 
 type QuerySlice struct {
-	ID  int `json:"id"`
-	Max int `json:"max"`
+	Field string `json:"field,omitempty"`
+	ID    int    `json:"id"`
+	Max   int    `json:"max"`
 }
 
 type Aggs struct {
@@ -195,6 +197,8 @@ type BucketValue struct {
 	Value float64
 }
 
+var cfg es.Config
+
 func main() {
 	data, err := os.ReadFile(os.Args[1])
 	if err != nil {
@@ -208,7 +212,7 @@ func main() {
 		log.Fatalf("error: %v", err)
 	}
 
-	cfg := es.Config{
+	cfg = es.Config{
 		Addresses: []string{
 			fmt.Sprintf("%s://%s:%d", c.Elastic.Scheme, c.Elastic.Host, c.Elastic.Port),
 		},
@@ -453,7 +457,9 @@ func Scroll(l *lru.Cache[string, *Result], client *es.Client, index string, filt
 		g.Go(func() error {
 			defer wg.Done()
 
-			sliceResult, err := slice(sliceIndex, client, index, filter)
+			thisClient, _ := es.NewClient(cfg)
+
+			sliceResult, err := slice(sliceIndex, thisClient, index, filter)
 			if err != nil {
 				return err
 			}
@@ -499,9 +505,11 @@ func Scroll(l *lru.Cache[string, *Result], client *es.Client, index string, filt
 
 func slice(sliceIndex int, client *es.Client, index string, filter Filter) (*Result, error) {
 	query := &Query{
-		Size: maxSize,
-		Sort: []string{"_doc"},
+		Size:           maxSize,
+		Sort:           []string{"_doc"},
+		TrackTotalHits: true,
 		Slice: &QuerySlice{
+			// Field: "END_TIME",
 			ID:  sliceIndex,
 			Max: maxSlices,
 		},
