@@ -16,29 +16,17 @@ import (
 )
 
 const (
-	index        = "user-data-ssg-isg-lsf-analytics-*"
-	maxSize      = 10000
-	maxSlices    = 2
-	scrollTime   = 1 * time.Minute
-	cacheSize    = 128
-	keepAlive    = "1m"
-	pitSortOrder = "_shard_doc"
+	index      = "user-data-ssg-isg-lsf-analytics-*"
+	maxSize    = 10000
+	scrollTime = 1 * time.Minute
+	cacheSize  = 128
 )
 
 type Query struct {
-	Size           int          `json:"size"`
-	PIT            *PIT         `json:"pit,omitempty"`
-	Aggs           *Aggs        `json:"aggs,omitempty"`
-	Query          *QueryFilter `json:"query,omitempty"`
-	Sort           string       `json:"sort,omitempty"`
-	SearchAfter    []int        `json:"search_after,omitempty"`
-	TrackTotalHits bool         `json:"track_total_hits,omitempty"`
-}
-
-type QuerySlice struct {
-	Field string `json:"field,omitempty"`
-	ID    int    `json:"id"`
-	Max   int    `json:"max"`
+	Size  int          `json:"size"`
+	Aggs  *Aggs        `json:"aggs,omitempty"`
+	Query *QueryFilter `json:"query,omitempty"`
+	Sort  []string     `json:"sort,omitempty"`
 }
 
 type Aggs struct {
@@ -118,13 +106,8 @@ type Config struct {
 	}
 }
 
-type PIT struct {
-	ID        string `json:"id"`
-	KeepAlive string `json:"keep_alive,omitempty"`
-}
-
 type Result struct {
-	PitID        string `json:"pit_id"`
+	ScrollID     string `json:"_scroll_id"`
 	Took         int
 	TimedOut     bool   `json:"timed_out"`
 	HitSet       HitSet `json:"hits"`
@@ -141,7 +124,6 @@ type HitSet struct {
 type Hit struct {
 	ID      string  `json:"_id"`
 	Details Details `json:"_source"`
-	Sort    []int   `json:"sort"`
 }
 
 type Details struct {
@@ -159,7 +141,7 @@ type Details struct {
 	// EXEC_HOSTNAME                  []string
 	// Exit_Info                      int
 	// Exitreason                     string
-	// JOB_ID                         int
+	JOB_ID int
 	// JOB_EXIT_STATUS                int
 	JOB_NAME string
 	Job      string
@@ -239,75 +221,75 @@ func main() {
 
 	t := time.Now()
 
-	// bomQuery := &Query{
-	// 	Aggs: &Aggs{
-	// 		Stats: AggsStats{
-	// 			MultiTerms: MultiTerms{
-	// 				Terms: []Field{
-	// 					{Field: "ACCOUNTING_NAME"},
-	// 					{Field: "NUM_EXEC_PROCS"},
-	// 					{Field: "Job"},
-	// 				},
-	// 				Size: 1000,
-	// 			},
-	// 			Aggs: map[string]AggsField{
-	// 				"cpu_avail_sec": {
-	// 					Sum: &Field{Field: "AVAIL_CPU_TIME_SEC"},
-	// 				},
-	// 				"cpu_wasted_sec": {
-	// 					Sum: &Field{Field: "WASTED_CPU_SECONDS"},
-	// 				},
-	// 				"mem_avail_mb_sec": {
-	// 					Sum: &Field{Field: "MEM_REQUESTED_MB_SEC"},
-	// 				},
-	// 				"mem_wasted_mb_sec": {
-	// 					Sum: &Field{Field: "WASTED_MB_SECONDS"},
-	// 				},
-	// 				"wasted_cost": {
-	// 					ScriptedMetric: &ScriptedMetric{
-	// 						InitScript:    "state.costs = []",
-	// 						MapScript:     "double cpu_cost = doc.WASTED_CPU_SECONDS.value * params.cpu_second; double mem_cost = doc.WASTED_MB_SECONDS.value * params.mb_second; state.costs.add(Math.max(cpu_cost, mem_cost))",
-	// 						CombineScript: "double total = 0; for (t in state.costs) { total += t } return total",
-	// 						ReduceScript:  "double total = 0; for (a in states) { total += a } return total",
-	// 						Params: map[string]float64{
-	// 							"cpu_second": 7.0556e-07,
-	// 							"mb_second":  5.8865e-11,
-	// 						},
-	// 					},
-	// 				},
-	// 			},
-	// 		},
-	// 	},
-	// 	Query: &QueryFilter{
-	// 		Bool: QFBool{
-	// 			Filter: Filter{
-	// 				{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
-	// 				{"range": map[string]interface{}{
-	// 					"timestamp": map[string]string{
-	// 						"lte":    "2024-06-04T00:00:00Z",
-	// 						"gte":    "2024-05-04T00:00:00Z",
-	// 						"format": "strict_date_optional_time",
-	// 					},
-	// 				}},
-	// 				{"match_phrase": map[string]interface{}{"BOM": "Human Genetics"}},
-	// 			},
-	// 		},
-	// 	},
-	// }
+	bomQuery := &Query{
+		Aggs: &Aggs{
+			Stats: AggsStats{
+				MultiTerms: MultiTerms{
+					Terms: []Field{
+						{Field: "ACCOUNTING_NAME"},
+						{Field: "NUM_EXEC_PROCS"},
+						{Field: "Job"},
+					},
+					Size: 1000,
+				},
+				Aggs: map[string]AggsField{
+					"cpu_avail_sec": {
+						Sum: &Field{Field: "AVAIL_CPU_TIME_SEC"},
+					},
+					"cpu_wasted_sec": {
+						Sum: &Field{Field: "WASTED_CPU_SECONDS"},
+					},
+					"mem_avail_mb_sec": {
+						Sum: &Field{Field: "MEM_REQUESTED_MB_SEC"},
+					},
+					"mem_wasted_mb_sec": {
+						Sum: &Field{Field: "WASTED_MB_SECONDS"},
+					},
+					"wasted_cost": {
+						ScriptedMetric: &ScriptedMetric{
+							InitScript:    "state.costs = []",
+							MapScript:     "double cpu_cost = doc.WASTED_CPU_SECONDS.value * params.cpu_second; double mem_cost = doc.WASTED_MB_SECONDS.value * params.mb_second; state.costs.add(Math.max(cpu_cost, mem_cost))",
+							CombineScript: "double total = 0; for (t in state.costs) { total += t } return total",
+							ReduceScript:  "double total = 0; for (a in states) { total += a } return total",
+							Params: map[string]float64{
+								"cpu_second": 7.0556e-07,
+								"mb_second":  5.8865e-11,
+							},
+						},
+					},
+				},
+			},
+		},
+		Query: &QueryFilter{
+			Bool: QFBool{
+				Filter: Filter{
+					{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
+					{"range": map[string]interface{}{
+						"timestamp": map[string]string{
+							"lte":    "2024-06-04T00:00:00Z",
+							"gte":    "2024-05-04T00:00:00Z",
+							"format": "strict_date_optional_time",
+						},
+					}},
+					{"match_phrase": map[string]interface{}{"BOM": "Human Genetics"}},
+				},
+			},
+		},
+	}
 
-	// result, err := Search(l, client, index, bomQuery)
-	// if err != nil {
-	// 	log.Fatalf("Error searching: %s", err)
-	// }
+	result, err := Search(l, client, index, bomQuery)
+	if err != nil {
+		log.Fatalf("Error searching: %s", err)
+	}
 
-	// if len(result.HitSet.Hits) > 0 {
-	// 	fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0])
-	// }
+	if len(result.HitSet.Hits) > 0 {
+		fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0])
+	}
 
-	// if len(result.Aggregations.Stats.Buckets) > 0 {
-	// 	fmt.Printf("first agg: %+v\n", result.Aggregations.Stats.Buckets[0])
-	// }
-	// fmt.Printf("took: %s\n\n", time.Since(t))
+	if len(result.Aggregations.Stats.Buckets) > 0 {
+		fmt.Printf("first agg: %+v\n", result.Aggregations.Stats.Buckets[0])
+	}
+	fmt.Printf("took: %s\n\n", time.Since(t))
 
 	filter := Filter{
 		{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
@@ -323,7 +305,7 @@ func main() {
 	}
 
 	t = time.Now()
-	result, err := SearchAfter(l, client, index, filter)
+	result, err = Scroll(l, client, index, filter)
 	if err != nil {
 		log.Fatalf("Error searching: %s", err)
 	}
@@ -342,40 +324,47 @@ func main() {
 	}
 	fmt.Printf("took: %s\n\n", time.Since(t))
 
-	// t = time.Now()
-	// result, err = Search(l, client, index, bomQuery)
-	// if err != nil {
-	// 	log.Fatalf("Error searching: %s", err)
-	// }
+	t = time.Now()
+	result, err = Search(l, client, index, bomQuery)
+	if err != nil {
+		log.Fatalf("Error searching: %s", err)
+	}
 
-	// if len(result.HitSet.Hits) > 0 {
-	// 	fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0])
-	// }
+	if len(result.HitSet.Hits) > 0 {
+		fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0])
+	}
 
-	// if len(result.Aggregations.Stats.Buckets) > 0 {
-	// 	fmt.Printf("first agg: %+v\n", result.Aggregations.Stats.Buckets[0])
-	// }
-	// fmt.Printf("took: %s\n\n", time.Since(t))
+	if len(result.Aggregations.Stats.Buckets) > 0 {
+		fmt.Printf("first agg: %+v\n", result.Aggregations.Stats.Buckets[0])
+	}
+	fmt.Printf("took: %s\n\n", time.Since(t))
 
-	// t = time.Now()
-	// result, err = SearchAfter(l, client, index, filter)
-	// if err != nil {
-	// 	log.Fatalf("Error searching: %s", err)
-	// }
+	t = time.Now()
+	result, err = Scroll(l, client, index, filter)
+	if err != nil {
+		log.Fatalf("Error searching: %s", err)
+	}
 
-	// if result == nil {
-	// 	return
-	// }
+	if result == nil {
+		return
+	}
 
-	// if len(result.HitSet.Hits) > 0 {
-	// 	fmt.Printf("num hits: %+v\n", len(result.HitSet.Hits))
-	// 	fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0])
-	// }
+	if len(result.HitSet.Hits) > 0 {
+		fmt.Printf("num hits: %+v\n", len(result.HitSet.Hits))
+		fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0])
 
-	// if len(result.Aggregations.Stats.Buckets) > 0 {
-	// 	fmt.Printf("first agg: %+v\n", result.Aggregations.Stats.Buckets[0])
-	// }
-	// fmt.Printf("took: %s\n\n", time.Since(t))
+		bids := make(map[int]bool)
+		for _, hit := range result.HitSet.Hits {
+			bids[hit.Details.JOB_ID] = true
+		}
+
+		fmt.Printf("unique job ids: %d\n", len(bids))
+	}
+
+	if len(result.Aggregations.Stats.Buckets) > 0 {
+		fmt.Printf("first agg: %+v\n", result.Aggregations.Stats.Buckets[0])
+	}
+	fmt.Printf("took: %s\n\n", time.Since(t))
 }
 
 func Search(l *lru.Cache[string, *Result], client *es.Client, index string, query *Query) (*Result, error) {
@@ -414,7 +403,7 @@ func Search(l *lru.Cache[string, *Result], client *es.Client, index string, quer
 
 func parseResponse(resp *esapi.Response) (*Result, error) {
 	if resp.IsError() {
-		return nil, fmt.Errorf("search failed: %s, %+v", resp.Status(), resp)
+		return nil, fmt.Errorf("elasticsearch query failed: %s", resp)
 	}
 
 	defer resp.Body.Close()
@@ -439,8 +428,13 @@ func parseResponse(resp *esapi.Response) (*Result, error) {
 	return &result, nil
 }
 
-func SearchAfter(l *lru.Cache[string, *Result], client *es.Client, index string, filter Filter) (*Result, error) {
-	query := &Query{Query: &QueryFilter{Bool: QFBool{Filter: filter}}}
+func Scroll(l *lru.Cache[string, *Result], client *es.Client, index string, filter Filter) (*Result, error) {
+	query := &Query{
+		Size: maxSize,
+		Sort: []string{"_doc"},
+		// Sort:           []string{"JOB_ID"},
+		Query: &QueryFilter{Bool: QFBool{Filter: filter}},
+	}
 
 	cacheKey, err := query.CacheKey()
 	if err != nil {
@@ -452,79 +446,48 @@ func SearchAfter(l *lru.Cache[string, *Result], client *es.Client, index string,
 		return result, nil
 	}
 
-	pit, err := getPointInTime(client)
-	if err != nil {
-		return nil, err
-	}
-
-	query = &Query{
-		Size:           maxSize,
-		Sort:           pitSortOrder,
-		PIT:            pit,
-		Query:          query.Query,
-		TrackTotalHits: false,
-	}
-
-	result, err = searchAfter(client, query)
-	if err != nil {
-		return nil, err
-	}
-
-	l.Add(cacheKey, result)
-
-	return result, nil
-}
-
-func getPointInTime(client *es.Client) (*PIT, error) {
-	resp, err := client.OpenPointInTime([]string{index}, keepAlive)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.IsError() {
-		return nil, fmt.Errorf("pit request failed: %s", resp.Status())
-	}
-
-	defer resp.Body.Close()
-
-	var pit PIT
-
-	if err := json.NewDecoder(resp.Body).Decode(&pit); err != nil {
-		return nil, err
-	}
-
-	pit.KeepAlive = keepAlive
-
-	return &pit, nil
-}
-
-func searchAfter(client *es.Client, query *Query) (*Result, error) {
 	qbody, err := query.AsBody()
 	if err != nil {
 		return nil, err
 	}
 
 	resp, err := client.Search(
+		client.Search.WithIndex(index),
 		client.Search.WithBody(qbody),
 		client.Search.WithSize(maxSize),
+		client.Search.WithScroll(scrollTime),
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := parseResponse(resp)
+	result, err = parseResponse(resp)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(result.HitSet.Hits) < maxSize {
+	defer func() {
+		scrollIDBody, err := scrollIDBody(result.ScrollID)
+		if err != nil {
+			log.Fatalf("scrollIDBody failed: %s\n", err)
+			return
+		}
+
+		_, err = client.ClearScroll(client.ClearScroll.WithBody(scrollIDBody))
+		if err != nil {
+			log.Fatalf("clearscroll failed: %s\n", err)
+		}
+	}()
+
+	l.Add(cacheKey, result)
+
+	total := result.HitSet.Total.Value
+	if total <= maxSize {
 		return result, nil
 	}
 
-	keepPaging := true
-
-	for keepPaging {
-		keepPaging, err = page(client, query, result)
+	for keepScrolling := true; keepScrolling; keepScrolling = len(result.HitSet.Hits) < total {
+		err = scroll(client, result)
 		if err != nil {
 			return nil, err
 		}
@@ -533,30 +496,36 @@ func searchAfter(client *es.Client, query *Query) (*Result, error) {
 	return result, nil
 }
 
-func page(client *es.Client, query *Query, result *Result) (bool, error) {
-	query.PIT.ID = result.PitID
-	query.SearchAfter = result.HitSet.Hits[len(result.HitSet.Hits)-1].Sort
-
-	qbody, err := query.AsBody()
+func scrollIDBody(scrollID string) (*bytes.Buffer, error) {
+	scrollBytes, err := json.Marshal(&map[string]string{"scroll_id": scrollID})
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 
-	resp, err := client.Search(
-		client.Search.WithBody(qbody),
-		client.Search.WithSize(maxSize),
+	return bytes.NewBuffer(scrollBytes), nil
+}
+
+func scroll(client *es.Client, result *Result) error {
+	scrollIDBody, err := scrollIDBody(result.ScrollID)
+	if err != nil {
+		return err
+	}
+
+	resp, err := client.Scroll(
+		client.Scroll.WithBody(scrollIDBody),
+		client.Scroll.WithScroll(scrollTime),
 	)
 	if err != nil {
-		return false, err
+		return err
 	}
 
-	pageResult, err := parseResponse(resp)
+	scrollResult, err := parseResponse(resp)
 	if err != nil {
-		return false, err
+		return err
 	}
 
-	result.PitID = pageResult.PitID
-	result.HitSet.Hits = append(result.HitSet.Hits, pageResult.HitSet.Hits...)
+	result.HitSet.Hits = append(result.HitSet.Hits, scrollResult.HitSet.Hits...)
+	result.ScrollID = scrollResult.ScrollID
 
-	return len(pageResult.HitSet.Hits) == maxSize, nil
+	return nil
 }

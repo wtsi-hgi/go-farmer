@@ -2,10 +2,7 @@ module github.com/wtsi-hgi/go-farmer
 
 go 1.22.0
 
-require (
-	github.com/elastic/go-elasticsearch/v7 v7.17.10
-	golang.org/x/sync v0.7.0
-)
+require github.com/elastic/go-elasticsearch/v7 v7.17.10
 
 require (
 	github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13
