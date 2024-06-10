@@ -22,5 +22,5 @@ network elastic deployment with public access.
 ## Usage
 
 ```
-go run main.go /path/to/config.yml
+go run main.go /path/to/config.yml /path/to/database
 ```

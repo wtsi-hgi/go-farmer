@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/dgryski/go-farm"
@@ -25,7 +26,6 @@ const (
 	maxSize    = 10000
 	scrollTime = 1 * time.Minute
 	cacheSize  = 128
-	dbBasename = ".farmer.boltdb"
 	bucketName = "hits"
 
 	timeStampLength     = 8
@@ -234,19 +234,27 @@ func main() {
 		log.Fatalf("%s\n", err)
 	}
 
-	db, err := openDB()
+	dbPath := os.Args[2]
+
+	dbExisted := false
+
+	if _, err = os.Stat(dbPath); err == nil {
+		dbExisted = true
+	}
+
+	db, err := openDB(dbPath)
 	if err != nil {
 		log.Fatalf("%s\n", err)
 	}
 
 	defer db.Close()
 
-	err = initDB(db, client)
-	if err != nil {
-		log.Fatalf("%s\n", err)
+	if !dbExisted {
+		err = initDB(db, client)
+		if err != nil {
+			log.Fatalf("%s\n", err)
+		}
 	}
-
-	// return
 
 	// t := time.Now()
 
@@ -324,10 +332,8 @@ func main() {
 		{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
 		{"range": map[string]interface{}{
 			"timestamp": map[string]string{
-				// "lte":    "2024-06-04T00:00:00Z",
-				// "gte":    "2024-05-04T00:00:00Z",
-				"lte":    "2024-06-10T00:00:00Z",
-				"gte":    "2024-06-09T23:50:00Z",
+				"lte":    "2024-06-04T00:00:00Z",
+				"gte":    "2024-05-04T00:00:00Z",
 				"format": "strict_date_optional_time",
 			},
 		}},
@@ -391,8 +397,12 @@ func main() {
 	// fmt.Printf("took: %s\n\n", time.Since(t))
 }
 
-func openDB() (*bolt.DB, error) {
-	db, err := bolt.Open(dbBasename, 0600, nil)
+func openDB(path string) (*bolt.DB, error) {
+	db, err := bolt.Open(path, 0600, &bolt.Options{
+		PreLoadFreelist: true,
+		FreelistType:    bolt.FreelistMapType,
+		MmapFlags:       syscall.MAP_POPULATE,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -414,9 +424,8 @@ func initDB(db *bolt.DB, client *es.Client) error {
 		{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
 		{"range": map[string]interface{}{
 			"timestamp": map[string]string{
-				"lte": "2024-06-10T00:00:00Z",
-				// "gte":    "2024-05-01T00:00:00Z",
-				"gte":    "2024-06-09T23:50:00Z",
+				"lte":    "2024-06-10T00:00:00Z",
+				"gte":    "2024-05-01T00:00:00Z",
 				"format": "strict_date_optional_time",
 			},
 		}},
@@ -604,7 +613,6 @@ func searchBolt(db *bolt.DB, query *Query) (*Result, error) {
 	}
 
 	accountingName, userName, queueName := queryToFilters(query)
-	fmt.Printf("got filters %s, %s, %s\n", accountingName, userName, queueName)
 
 	ch := new(codec.BincHandle)
 
