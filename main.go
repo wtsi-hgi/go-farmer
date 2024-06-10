@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/dgryski/go-farm"
@@ -26,6 +27,12 @@ const (
 	cacheSize  = 128
 	dbBasename = ".farmer.boltdb"
 	bucketName = "hits"
+
+	timeStampLength     = 8
+	endOfTimeStampIndex = timeStampLength - 1
+	bomMaxWidth         = 34
+	startOfBomIndex     = timeStampLength
+	endOfBomIndex       = startOfBomIndex + bomMaxWidth
 )
 
 type Query struct {
@@ -133,7 +140,7 @@ type Hit struct {
 }
 
 type Details struct {
-	// ACCOUNTING_NAME                string
+	ACCOUNTING_NAME    string
 	AVAIL_CPU_TIME_SEC int
 	// AVG_MEM_EFFICIENCY_PERCENT     float64
 	// AVRG_MEM_USAGE_MB              float64
@@ -239,30 +246,7 @@ func main() {
 		log.Fatalf("%s\n", err)
 	}
 
-	ch := new(codec.BincHandle)
-
-	db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bucketName))
-
-		b.ForEach(func(k, v []byte) error {
-			dec := codec.NewDecoderBytes(v, ch)
-
-			var details *Details
-
-			dec.MustDecode(&details)
-
-			timestamp := time.Unix(btoi64(k[0:7]), 0).UTC().Format(time.RFC3339)
-
-			bom := string(k[8:])
-
-			fmt.Printf("%v.%s: %+v\n", timestamp, bom, details)
-			return nil
-		})
-
-		return nil
-	})
-
-	return
+	// return
 
 	// t := time.Now()
 
@@ -340,8 +324,10 @@ func main() {
 		{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
 		{"range": map[string]interface{}{
 			"timestamp": map[string]string{
-				"lte":    "2024-06-04T00:00:00Z",
-				"gte":    "2024-05-04T00:00:00Z",
+				// "lte":    "2024-06-04T00:00:00Z",
+				// "gte":    "2024-05-04T00:00:00Z",
+				"lte":    "2024-06-10T00:00:00Z",
+				"gte":    "2024-06-09T23:50:00Z",
 				"format": "strict_date_optional_time",
 			},
 		}},
@@ -361,42 +347,7 @@ func main() {
 
 	if len(result.HitSet.Hits) > 0 {
 		fmt.Printf("num hits: %+v\n", len(result.HitSet.Hits))
-		fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0])
-
-		timestamp := result.HitSet.Hits[0].Details.Timestamp
-
-		ut := time.Unix(timestamp, 0).UTC()
-
-		fmt.Printf("%d; %s\n", timestamp, ut)
-
-		var lte, gte time.Time
-
-		for _, val := range filter {
-			fRange, ok := val["range"]
-			if ok {
-				timestampInter, ok := fRange["timestamp"]
-				if ok {
-					timestamp, ok := timestampInter.(map[string]string)
-					if ok {
-						lte, err = time.Parse(time.RFC3339, timestamp["lte"])
-						if err != nil {
-							log.Fatalf("time parse error: %s", err)
-							return
-						}
-
-						gte, err = time.Parse(time.RFC3339, timestamp["gte"])
-						if err != nil {
-							log.Fatalf("time parse error: %s", err)
-							return
-						}
-					}
-				}
-			}
-		}
-
-		fmt.Printf("%v (%s) (%d)\n", i64tob(lte.Unix()), lte, lte.Unix())
-		fmt.Printf("%v (%s)\n", i64tob(timestamp), ut)
-		fmt.Printf("%v (%s)\n", i64tob(gte.Unix()), gte)
+		// fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0])
 	}
 
 	if len(result.Aggregations.Stats.Buckets) > 0 {
@@ -506,38 +457,39 @@ func storeInLocalDB(db *bolt.DB, result *Result) error {
 			return errors.New("bucket does not exist")
 		}
 
-		// boms := make(map[string]bool)
-
 		fmt.Printf("storing %d hits\n", len(result.HitSet.Hits))
 
 		for _, hit := range result.HitSet.Hits {
-			// boms[hit.Details.BOM] = true
+			bom, err := fixedWidthBOM(hit.Details.BOM)
+			if err != nil {
+				return err
+			}
 
 			key := i64tob(hit.Details.Timestamp)
-			key = append(key, []byte(hit.Details.BOM)...)
+			key = append(key, bom...)
+			key = append(key, []byte(hit.ID)...)
 
 			var encoded []byte
 			enc := codec.NewEncoderBytes(&encoded, ch)
 			enc.MustEncode(hit.Details)
 
-			err := b.Put(key, encoded)
+			err = b.Put(key, encoded)
 			if err != nil {
 				return err
 			}
 		}
 
-		// longest := 0
-		// for bom := range boms {
-		// 	fmt.Printf("%s\n", bom)
-
-		// 	if len(bom) > longest {
-		// 		longest = len(bom)
-		// 	}
-		// }
-		// fmt.Printf("longest: %d\n", longest) 21? From an hour window
-
 		return nil
 	})
+}
+
+func fixedWidthBOM(bom string) ([]byte, error) {
+	padding := bomMaxWidth - len(bom)
+	if padding < 0 {
+		return nil, errors.New("bom too long")
+	}
+
+	return []byte(bom + strings.Repeat(" ", padding)), nil
 }
 
 // i64tob returns an 8-byte big endian representation of v. The result is a
@@ -628,7 +580,7 @@ func Scroll(l *lru.Cache[string, *Result], db *bolt.DB, client *es.Client, index
 		return result, nil
 	}
 
-	result, err = searchWithScroll(client, query)
+	result, err = searchBolt(db, query) //searchWithScroll(client, query)
 	if err != nil {
 		return nil, err
 	}
@@ -636,6 +588,175 @@ func Scroll(l *lru.Cache[string, *Result], db *bolt.DB, client *es.Client, index
 	l.Add(cacheKey, result)
 
 	return result, nil
+}
+
+func searchBolt(db *bolt.DB, query *Query) (*Result, error) {
+	lte, gte, err := queryToBoltPrefixRange(query)
+	if err != nil {
+		return nil, err
+	}
+
+	// lteStamp := time.Unix(btoi64(lte), 0).UTC().Format(time.RFC3339)
+
+	bom, err := queryToBom(query)
+	if err != nil {
+		return nil, err
+	}
+
+	accountingName, userName, queueName := queryToFilters(query)
+	fmt.Printf("got filters %s, %s, %s\n", accountingName, userName, queueName)
+
+	ch := new(codec.BincHandle)
+
+	result := &Result{}
+
+	err = db.View(func(tx *bolt.Tx) error {
+		c := tx.Bucket([]byte(bucketName)).Cursor()
+
+		for k, v := c.Seek(gte); k != nil && bytes.Compare(k[0:endOfTimeStampIndex], lte) <= 0; k, v = c.Next() {
+			if !bytes.Equal(k[startOfBomIndex:endOfBomIndex], bom) {
+				continue
+			}
+
+			dec := codec.NewDecoderBytes(v, ch)
+
+			var details *Details
+
+			dec.MustDecode(&details)
+
+			if accountingName != "" && details.ACCOUNTING_NAME != accountingName {
+				continue
+			}
+
+			if userName != "" && details.USER_NAME != userName {
+				continue
+			}
+
+			if queueName != "" && !strings.HasPrefix(details.QUEUE_NAME, queueName) {
+				continue
+			}
+
+			result.HitSet.Hits = append(result.HitSet.Hits, Hit{Details: *details})
+			result.HitSet.Total.Value++
+		}
+
+		return nil
+	})
+
+	return result, err
+}
+
+// queryToBoltPrefixRange extracts the timestamps from the query and converts
+// them in to byte slices that would match what we stored in our bold database.
+func queryToBoltPrefixRange(query *Query) ([]byte, []byte, error) {
+	lte, gte, err := parseRange(query.Query.Bool.Filter)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return i64tob(lte.Unix()), i64tob(gte.Unix()), nil
+}
+
+func parseRange(filter Filter) (lte time.Time, gte time.Time, err error) {
+	for _, val := range filter {
+		fRange, ok := val["range"]
+		if !ok {
+			continue
+		}
+
+		timestampInterface, ok := fRange["timestamp"]
+		if !ok {
+			break
+		}
+
+		timestamp, ok := timestampInterface.(map[string]string)
+		if !ok {
+			break
+		}
+
+		lte, err = time.Parse(time.RFC3339, timestamp["lte"])
+		if err != nil {
+			return
+		}
+
+		gte, err = time.Parse(time.RFC3339, timestamp["gte"])
+		if err != nil {
+			return
+		}
+
+		return
+	}
+
+	err = errors.New("no timestamp range found")
+
+	return
+}
+
+func queryToBom(query *Query) ([]byte, error) {
+	for _, val := range query.Query.Bool.Filter {
+		mp, ok := val["match_phrase"]
+		if !ok {
+			continue
+		}
+
+		bomStr := stringFromFilterValue(mp, "BOM")
+		if bomStr == "" {
+			continue
+		}
+
+		return fixedWidthBOM(bomStr)
+	}
+
+	return nil, errors.New("BOM not specified")
+}
+
+func stringFromFilterValue(fv map[string]interface{}, key string) string {
+	keyInterface, ok := fv[key]
+	if !ok {
+		return ""
+	}
+
+	keyString, ok := keyInterface.(string)
+	if !ok {
+		return ""
+	}
+
+	return keyString
+}
+
+func queryToFilters(query *Query) (accountingName, userName, queueName string) {
+	for _, val := range query.Query.Bool.Filter {
+		mp, ok := val["match_phrase"]
+		if !ok {
+			continue
+		}
+
+		thisStr := stringFromFilterValue(mp, "ACCOUNTING_NAME")
+		if thisStr != "" {
+			accountingName = thisStr
+		}
+
+		thisStr = stringFromFilterValue(mp, "USER_NAME")
+		if thisStr != "" {
+			userName = thisStr
+		}
+	}
+
+	for _, val := range query.Query.Bool.Filter {
+		p, ok := val["prefix"]
+		if !ok {
+			continue
+		}
+
+		thisStr := stringFromFilterValue(p, "QUEUE_NAME")
+		if thisStr != "" {
+			queueName = thisStr
+
+			break
+		}
+	}
+
+	return
 }
 
 func searchWithScroll(client *es.Client, query *Query) (*Result, error) {
