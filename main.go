@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -19,14 +22,19 @@ import (
 	"github.com/ugorji/go/codec"
 	bolt "go.etcd.io/bbolt"
 	"gopkg.in/yaml.v3"
+
+	"github.com/dsnet/compress/bzip2"
 )
 
 const (
-	index      = "user-data-ssg-isg-lsf-analytics-*"
-	maxSize    = 10000
-	scrollTime = 1 * time.Minute
-	cacheSize  = 128
-	bucketName = "hits"
+	index          = "user-data-ssg-isg-lsf-analytics-*"
+	maxSize        = 10000
+	scrollTime     = 1 * time.Minute
+	cacheSize      = 128
+	bucketName     = "hits"
+	dateFormat     = "2006-01-02"
+	dbDirPerms     = 0770
+	flatDBReadSize = 4687 // max length of a record on a month's worth of sample data
 
 	timeStampLength        = 8
 	endOfTimeStampIndex    = timeStampLength - 1
@@ -39,14 +47,15 @@ const (
 	userNameMaxWidth       = 12
 	startOfUserIndex       = endOfAccountingIndex
 	endOfUserIndex         = startOfUserIndex + userNameMaxWidth
-	notInGPUQueue          = byte(0)
-	inGPUQueue             = byte(1)
+	notInGPUQueue          = byte(1)
+	inGPUQueue             = byte(2)
 	isGPUIndex             = endOfUserIndex
+	lengthEncodeLength     = 4
 
 	testMode       = false
-	useMapPopulate = true
+	useMapPopulate = false
 	loadFromBolt   = false
-	boltPath       = "/lustre/scratch123/hgi/mdt2/teams/hgi/ip13/farmers/bolt.db"
+	boltPath       = "/lustre/scratch123/hgi/mdt2/teams/hgi/ip13/farmers/bolt.db.keys"
 )
 
 type Query struct {
@@ -256,15 +265,8 @@ func main() {
 		dbExisted = true
 	}
 
-	db, err := openDB(dbPath)
-	if err != nil {
-		log.Fatalf("%s\n", err)
-	}
-
-	defer db.Close()
-
 	if !dbExisted {
-		err = initDB(db, client)
+		err = initDB(dbPath, client)
 		if err != nil {
 			log.Fatalf("%s\n", err)
 		}
@@ -365,7 +367,7 @@ func main() {
 	}
 
 	t := time.Now()
-	result, err := Scroll(l, db, client, index, filter)
+	result, err := Scroll(l, dbPath, client, index, filter)
 	if err != nil {
 		log.Fatalf("Error searching: %s", err)
 	}
@@ -447,7 +449,7 @@ func openDB(path string) (*bolt.DB, error) {
 	return db, nil
 }
 
-func initDB(db *bolt.DB, client *es.Client) error {
+func initDB(dbPath string, client *es.Client) error {
 	lte := "2024-06-10T00:00:00Z"
 	gte := "2024-05-01T00:00:00Z"
 	if testMode {
@@ -497,7 +499,7 @@ func initDB(db *bolt.DB, client *es.Client) error {
 	fmt.Printf("\nsearch took: %s\n", time.Since(t))
 	t = time.Now()
 
-	err = storeInLocalDB(db, result)
+	err = storeInLocalDB(dbPath, result)
 	if err != nil {
 		return err
 	}
@@ -507,57 +509,119 @@ func initDB(db *bolt.DB, client *es.Client) error {
 	return nil
 }
 
-func storeInLocalDB(db *bolt.DB, result *Result) error {
+type LocalDB struct {
+	dir string
+	dbs map[string]*flatDB
+}
+
+type flatDB struct {
+	f *os.File
+	w io.WriteCloser
+}
+
+func NewLocalDB(dir string) (*LocalDB, error) {
+	err := os.MkdirAll(dir, dbDirPerms)
+	if err != nil {
+		return nil, err
+	}
+
+	return &LocalDB{
+		dir: dir,
+		dbs: make(map[string]*flatDB),
+	}, nil
+}
+
+func (l *LocalDB) getFlatDB(timestamp int64, bom string) (*flatDB, error) {
+	key := fmt.Sprintf("%s.%s", time.Unix(timestamp, 0).UTC().Format(dateFormat), bom)
+
+	fdb, ok := l.dbs[key]
+	if !ok {
+		f, err := os.Create(filepath.Join(l.dir, key))
+		if err != nil {
+			return nil, err
+		}
+
+		w, _ := bzip2.NewWriter(f, nil)
+
+		fdb = &flatDB{f, w}
+		l.dbs[key] = fdb
+	}
+
+	return fdb, nil
+}
+
+func (l *LocalDB) Close() error {
+	for _, fdb := range l.dbs {
+		if err := fdb.w.Close(); err != nil {
+			return err
+		}
+
+		if err := fdb.f.Close(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func storeInLocalDB(dbPath string, result *Result) (err error) {
+	fmt.Printf("storing %d hits\n", len(result.HitSet.Hits))
+
+	ldb, errl := NewLocalDB(dbPath)
+	if errl != nil {
+		return errl
+	}
+
+	defer func() {
+		errc := ldb.Close()
+		if err == nil {
+			err = errc
+		}
+	}()
+
+	var buf bytes.Buffer
+
 	ch := new(codec.BincHandle)
 
-	return db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(bucketName))
-		if b == nil {
-			return errors.New("bucket does not exist")
+	for _, hit := range result.HitSet.Hits {
+		group, errf := fixedWidthGroup(hit.Details.ACCOUNTING_NAME)
+		if errf != nil {
+			err = errf
+			return
 		}
 
-		fmt.Printf("storing %d hits\n", len(result.HitSet.Hits))
-
-		for _, hit := range result.HitSet.Hits {
-			bom, err := fixedWidthBOM(hit.Details.BOM)
-			if err != nil {
-				return err
-			}
-
-			group, err := fixedWidthGroup(hit.Details.ACCOUNTING_NAME)
-			if err != nil {
-				return err
-			}
-
-			user, err := fixedWidthUser(hit.Details.USER_NAME)
-			if err != nil {
-				return err
-			}
-
-			isGPU := notInGPUQueue
-			if strings.HasPrefix(hit.Details.QUEUE_NAME, "gpu") {
-				isGPU = inGPUQueue
-			}
-
-			key := i64tob(hit.Details.Timestamp)
-			key = append(key, bom...)
-			key = append(key, group...)
-			key = append(key, user...)
-			key = append(key, isGPU)
-			key = append(key, []byte(hit.ID)...)
-
-			var encoded []byte
-			enc := codec.NewEncoderBytes(&encoded, ch)
-			enc.MustEncode(hit.Details)
-
-			err = b.Put(key, encoded)
-			if err != nil {
-				return err
-			}
+		user, errf := fixedWidthUser(hit.Details.USER_NAME)
+		if errf != nil {
+			err = errf
+			return
 		}
 
-		return nil
-	})
+		isGPU := notInGPUQueue
+		if strings.HasPrefix(hit.Details.QUEUE_NAME, "gpu") {
+			isGPU = inGPUQueue
+		}
+
+		fdb, errl := ldb.getFlatDB(hit.Details.Timestamp, hit.Details.BOM)
+		if errl != nil {
+			err = errf
+			return
+		}
+
+		fdb.w.Write(i64tob(hit.Details.Timestamp))
+		fdb.w.Write(group)
+		fdb.w.Write(user)
+		fdb.w.Write([]byte{isGPU})
+
+		buf.Reset()
+		enc := codec.NewEncoder(&buf, ch)
+		enc.MustEncode(hit.Details)
+		encoded := buf.Bytes()
+
+		fdb.w.Write(i32tob(int32(len(encoded))))
+		fdb.w.Write(encoded)
+	}
+
+	return
 }
 
 func fixedWidthBOM(bom string) ([]byte, error) {
@@ -592,6 +656,16 @@ func i64tob(v int64) []byte {
 // btoi64 converts an 8-byte slice into an int64.
 func btoi64(b []byte) int64 {
 	return int64(binary.BigEndian.Uint64(b[0:8]))
+}
+
+func i32tob(v int32) []byte {
+	b := make([]byte, 4)
+	binary.BigEndian.PutUint32(b, uint32(v))
+	return b
+}
+
+func btoi(b []byte) int {
+	return int(binary.BigEndian.Uint32(b[0:4]))
 }
 
 func Search(l *lru.Cache[string, *Result], client *es.Client, index string, query *Query) (*Result, error) {
@@ -652,7 +726,7 @@ func parseResponse(resp *esapi.Response) (*Result, error) {
 	return &result, nil
 }
 
-func Scroll(l *lru.Cache[string, *Result], db *bolt.DB, client *es.Client, index string, filter Filter) (*Result, error) {
+func Scroll(l *lru.Cache[string, *Result], dbPath string, client *es.Client, index string, filter Filter) (*Result, error) {
 	query := &Query{
 		Size:  maxSize,
 		Sort:  []string{"_doc"},
@@ -669,12 +743,156 @@ func Scroll(l *lru.Cache[string, *Result], db *bolt.DB, client *es.Client, index
 		return result, nil
 	}
 
-	result, err = searchBolt(db, query)
+	result, err = searchLocal(dbPath, query)
 	if err != nil {
 		return nil, err
 	}
 
 	l.Add(cacheKey, result)
+
+	return result, nil
+}
+
+func searchLocal(dbPath string, query *Query) (*Result, error) {
+	// ldb, err := NewLocalDB(dbPath)
+	// if err != nil {
+	// 	return nil, err
+	// }
+
+	lte, gte, err := parseRange(query.Query.Bool.Filter)
+	if err != nil {
+		return nil, err
+	}
+
+	bom, err := queryToBomStr(query)
+	if err != nil {
+		return nil, err
+	}
+
+	lteKey, gteKey := i64tob(lte.Unix()), i64tob(gte.Unix())
+
+	accountingName, userName, checkGPU := queryToFilters(query)
+
+	ch := new(codec.BincHandle)
+
+	result := &Result{}
+
+	currentDay := gte
+
+	tsBuf := make([]byte, timeStampLength)
+	accBuf := make([]byte, accountingNameMaxWidth)
+	userBuf := make([]byte, userNameMaxWidth)
+	lenBuf := make([]byte, lengthEncodeLength)
+
+	keyLen := timeStampLength + accountingNameMaxWidth + userNameMaxWidth + lengthEncodeLength
+	longestDetails := 0
+
+	for {
+		fileKey := currentDay.UTC().Format(dateFormat)
+		dbFilePath := filepath.Join(dbPath, fmt.Sprintf("%s.%s", fileKey, bom))
+		fmt.Printf("%s\n", dbFilePath)
+
+		f, err := os.Open(dbFilePath)
+		if err != nil {
+			return nil, err
+		}
+
+		r, _ := bzip2.NewReader(f, nil)
+		br := bufio.NewReaderSize(r, flatDBReadSize)
+
+		for {
+			_, err = io.ReadFull(br, tsBuf)
+			if err != nil {
+				if !errors.Is(err, io.EOF) {
+					fmt.Printf("a\n")
+					return nil, err
+				}
+
+				break
+			}
+
+			if bytes.Compare(tsBuf, lteKey) > 0 {
+				break
+			}
+
+			var passesFilter bool
+
+			if bytes.Compare(tsBuf, gteKey) >= 0 {
+				passesFilter = true
+			}
+
+			_, err = io.ReadFull(br, accBuf)
+			if err != nil {
+				fmt.Printf("b\n")
+				return nil, err
+			}
+
+			if passesFilter && len(accountingName) > 0 && !bytes.Equal(accBuf, accountingName) {
+				passesFilter = false
+			}
+
+			_, err = io.ReadFull(br, userBuf)
+			if err != nil {
+				fmt.Printf("c\n")
+				return nil, err
+			}
+
+			if passesFilter && len(userName) > 0 && !bytes.Equal(userBuf, userName) {
+				passesFilter = false
+			}
+
+			gpuByte, err := br.ReadByte()
+			if err != nil {
+				fmt.Printf("d\n")
+				return nil, err
+			}
+
+			if passesFilter && checkGPU && gpuByte != inGPUQueue {
+				passesFilter = false
+			}
+
+			_, err = io.ReadFull(br, lenBuf)
+			if err != nil {
+				fmt.Printf("e\n")
+				return nil, err
+			}
+
+			detailsLength := btoi(lenBuf)
+
+			if detailsLength > longestDetails {
+				longestDetails = detailsLength
+			}
+
+			buf := make([]byte, detailsLength)
+
+			_, err = io.ReadFull(br, buf)
+			if err != nil {
+				fmt.Printf("f %d\n", detailsLength)
+				return nil, err
+			}
+
+			if passesFilter {
+				dec := codec.NewDecoderBytes(buf, ch)
+
+				var details *Details
+
+				dec.MustDecode(&details)
+
+				result.HitSet.Hits = append(result.HitSet.Hits, Hit{Details: *details})
+				result.HitSet.Total.Value++
+			}
+		}
+
+		r.Close()
+		f.Close()
+
+		currentDay = currentDay.Add(24 * time.Hour)
+		if currentDay.After(lte) {
+			break
+		}
+	}
+
+	fmt.Printf("buffer should be %d long\n", keyLen+longestDetails)
 
 	return result, nil
 }
@@ -687,10 +905,7 @@ func searchBolt(db *bolt.DB, query *Query) (*Result, error) {
 
 	// lteStamp := time.Unix(btoi64(lte), 0).UTC().Format(time.RFC3339)
 
-	bom, err := queryToBom(query)
-	if err != nil {
-		return nil, err
-	}
+	bom, _ := queryToBom(query)
 
 	accountingName, userName, checkGPU := queryToFilters(query)
 
@@ -699,10 +914,34 @@ func searchBolt(db *bolt.DB, query *Query) (*Result, error) {
 	result := &Result{}
 
 	err = db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(bucketName))
+
+		i := 0
+
+		b.ForEach(func(k, v []byte) error {
+			dec := codec.NewDecoderBytes(v, ch)
+
+			var details *Details
+
+			dec.MustDecode(&details)
+
+			result.HitSet.Hits = append(result.HitSet.Hits, Hit{Details: *details})
+			result.HitSet.Total.Value++
+
+			i++
+			if i%10000 == 0 {
+				fmt.Printf(".")
+			}
+
+			return nil
+		})
+
+		return nil
+
 		c := tx.Bucket([]byte(bucketName)).Cursor()
 
 		for k, v := c.Seek(gte); k != nil && bytes.Compare(k[0:endOfTimeStampIndex], lte) <= 0; k, v = c.Next() {
-			if !bytes.Equal(k[startOfBomIndex:endOfBomIndex], bom) {
+			if len(bom) > 0 && !bytes.Equal(k[startOfBomIndex:endOfBomIndex], bom) {
 				continue
 			}
 
@@ -737,7 +976,7 @@ func searchBolt(db *bolt.DB, query *Query) (*Result, error) {
 }
 
 // queryToBoltPrefixRange extracts the timestamps from the query and converts
-// them in to byte slices that would match what we stored in our bold database.
+// them in to byte slices that would match what we stored in our bolt database.
 func queryToBoltPrefixRange(query *Query) ([]byte, []byte, error) {
 	lte, gte, err := parseRange(query.Query.Bool.Filter)
 	if err != nil {
@@ -812,6 +1051,24 @@ func stringFromFilterValue(fv map[string]interface{}, key string) string {
 	}
 
 	return keyString
+}
+
+func queryToBomStr(query *Query) (string, error) {
+	for _, val := range query.Query.Bool.Filter {
+		mp, ok := val["match_phrase"]
+		if !ok {
+			continue
+		}
+
+		bomStr := stringFromFilterValue(mp, "BOM")
+		if bomStr == "" {
+			continue
+		}
+
+		return bomStr, nil
+	}
+
+	return "", errors.New("BOM not specified")
 }
 
 func queryToFilters(query *Query) (accountingName, userName []byte, checkGPU bool) {
