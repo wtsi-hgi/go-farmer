@@ -22,8 +22,6 @@ import (
 	"github.com/ugorji/go/codec"
 	bolt "go.etcd.io/bbolt"
 	"gopkg.in/yaml.v3"
-
-	"github.com/dsnet/compress/bzip2"
 )
 
 const (
@@ -34,7 +32,7 @@ const (
 	bucketName     = "hits"
 	dateFormat     = "2006-01-02"
 	dbDirPerms     = 0770
-	flatDBReadSize = 4687 // max length of a record on a month's worth of sample data
+	fileBufferSize = 4 * 1024 * 1024
 
 	timeStampLength        = 8
 	endOfTimeStampIndex    = timeStampLength - 1
@@ -516,7 +514,7 @@ type LocalDB struct {
 
 type flatDB struct {
 	f *os.File
-	w io.WriteCloser
+	w *bufio.Writer
 }
 
 func NewLocalDB(dir string) (*LocalDB, error) {
@@ -541,7 +539,7 @@ func (l *LocalDB) getFlatDB(timestamp int64, bom string) (*flatDB, error) {
 			return nil, err
 		}
 
-		w, _ := bzip2.NewWriter(f, nil)
+		w := bufio.NewWriterSize(f, fileBufferSize)
 
 		fdb = &flatDB{f, w}
 		l.dbs[key] = fdb
@@ -552,7 +550,7 @@ func (l *LocalDB) getFlatDB(timestamp int64, bom string) (*flatDB, error) {
 
 func (l *LocalDB) Close() error {
 	for _, fdb := range l.dbs {
-		if err := fdb.w.Close(); err != nil {
+		if err := fdb.w.Flush(); err != nil {
 			return err
 		}
 
@@ -783,9 +781,7 @@ func searchLocal(dbPath string, query *Query) (*Result, error) {
 	accBuf := make([]byte, accountingNameMaxWidth)
 	userBuf := make([]byte, userNameMaxWidth)
 	lenBuf := make([]byte, lengthEncodeLength)
-
-	keyLen := timeStampLength + accountingNameMaxWidth + userNameMaxWidth + lengthEncodeLength
-	longestDetails := 0
+	detailsBuf := make([]byte, fileBufferSize)
 
 	for {
 		fileKey := currentDay.UTC().Format(dateFormat)
@@ -797,8 +793,7 @@ func searchLocal(dbPath string, query *Query) (*Result, error) {
 			return nil, err
 		}
 
-		r, _ := bzip2.NewReader(f, nil)
-		br := bufio.NewReaderSize(r, flatDBReadSize)
+		br := bufio.NewReaderSize(f, fileBufferSize)
 
 		for {
 			_, err = io.ReadFull(br, tsBuf)
@@ -859,11 +854,7 @@ func searchLocal(dbPath string, query *Query) (*Result, error) {
 
 			detailsLength := btoi(lenBuf)
 
-			if detailsLength > longestDetails {
-				longestDetails = detailsLength
-			}
-
-			buf := make([]byte, detailsLength)
+			buf := detailsBuf[0:detailsLength]
 
 			_, err = io.ReadFull(br, buf)
 			if err != nil {
@@ -883,7 +874,6 @@ func searchLocal(dbPath string, query *Query) (*Result, error) {
 			}
 		}
 
-		r.Close()
 		f.Close()
 
 		currentDay = currentDay.Add(24 * time.Hour)
@@ -891,8 +881,6 @@ func searchLocal(dbPath string, query *Query) (*Result, error) {
 			break
 		}
 	}
-
-	fmt.Printf("buffer should be %d long\n", keyLen+longestDetails)
 
 	return result, nil
 }
