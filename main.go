@@ -28,14 +28,25 @@ const (
 	cacheSize  = 128
 	bucketName = "hits"
 
-	timeStampLength     = 8
-	endOfTimeStampIndex = timeStampLength - 1
-	bomMaxWidth         = 34
-	startOfBomIndex     = timeStampLength
-	endOfBomIndex       = startOfBomIndex + bomMaxWidth
+	timeStampLength        = 8
+	endOfTimeStampIndex    = timeStampLength - 1
+	bomMaxWidth            = 34
+	startOfBomIndex        = timeStampLength
+	endOfBomIndex          = startOfBomIndex + bomMaxWidth
+	accountingNameMaxWidth = 24
+	startOfAccountingIndex = endOfBomIndex
+	endOfAccountingIndex   = startOfAccountingIndex + accountingNameMaxWidth
+	userNameMaxWidth       = 12
+	startOfUserIndex       = endOfAccountingIndex
+	endOfUserIndex         = startOfUserIndex + userNameMaxWidth
+	notInGPUQueue          = byte(0)
+	inGPUQueue             = byte(1)
+	isGPUIndex             = endOfUserIndex
 
-	testMode       = true
-	useMapPopulate = false
+	testMode       = false
+	useMapPopulate = true
+	loadFromBolt   = false
+	boltPath       = "/lustre/scratch123/hgi/mdt2/teams/hgi/ip13/farmers/bolt.db"
 )
 
 type Query struct {
@@ -257,6 +268,8 @@ func main() {
 		if err != nil {
 			log.Fatalf("%s\n", err)
 		}
+
+		return
 	}
 
 	// t := time.Now()
@@ -460,7 +473,23 @@ func initDB(db *bolt.DB, client *es.Client) error {
 
 	t := time.Now()
 
-	result, err := searchWithScroll(client, query)
+	var result *Result
+
+	var err error
+
+	if loadFromBolt {
+		bdb, erro := openDB(boltPath)
+		if erro != nil {
+			return erro
+		}
+
+		defer bdb.Close()
+
+		result, err = searchBolt(bdb, query)
+	} else {
+		result, err = searchWithScroll(client, query)
+	}
+
 	if err != nil {
 		return err
 	}
@@ -495,8 +524,26 @@ func storeInLocalDB(db *bolt.DB, result *Result) error {
 				return err
 			}
 
+			group, err := fixedWidthGroup(hit.Details.ACCOUNTING_NAME)
+			if err != nil {
+				return err
+			}
+
+			user, err := fixedWidthUser(hit.Details.USER_NAME)
+			if err != nil {
+				return err
+			}
+
+			isGPU := notInGPUQueue
+			if strings.HasPrefix(hit.Details.QUEUE_NAME, "gpu") {
+				isGPU = inGPUQueue
+			}
+
 			key := i64tob(hit.Details.Timestamp)
 			key = append(key, bom...)
+			key = append(key, group...)
+			key = append(key, user...)
+			key = append(key, isGPU)
 			key = append(key, []byte(hit.ID)...)
 
 			var encoded []byte
@@ -514,12 +561,24 @@ func storeInLocalDB(db *bolt.DB, result *Result) error {
 }
 
 func fixedWidthBOM(bom string) ([]byte, error) {
-	padding := bomMaxWidth - len(bom)
+	return fixedWidthString(bom, bomMaxWidth, "BOM")
+}
+
+func fixedWidthString(str string, max int, kind string) ([]byte, error) {
+	padding := max - len(str)
 	if padding < 0 {
-		return nil, errors.New("bom too long")
+		return nil, errors.New(kind + " too long")
 	}
 
-	return []byte(bom + strings.Repeat(" ", padding)), nil
+	return []byte(str + strings.Repeat(" ", padding)), nil
+}
+
+func fixedWidthGroup(group string) ([]byte, error) {
+	return fixedWidthString(group, accountingNameMaxWidth, "ACCOUNTING_NAME")
+}
+
+func fixedWidthUser(user string) ([]byte, error) {
+	return fixedWidthString(user, userNameMaxWidth, "USER_NAME")
 }
 
 // i64tob returns an 8-byte big endian representation of v. The result is a
@@ -633,7 +692,7 @@ func searchBolt(db *bolt.DB, query *Query) (*Result, error) {
 		return nil, err
 	}
 
-	accountingName, userName, queueName := queryToFilters(query)
+	accountingName, userName, checkGPU := queryToFilters(query)
 
 	ch := new(codec.BincHandle)
 
@@ -647,23 +706,25 @@ func searchBolt(db *bolt.DB, query *Query) (*Result, error) {
 				continue
 			}
 
+			if len(accountingName) > 0 &&
+				!bytes.Equal(k[startOfAccountingIndex:endOfAccountingIndex], accountingName) {
+				continue
+			}
+
+			if len(userName) > 0 &&
+				!bytes.Equal(k[startOfUserIndex:endOfUserIndex], userName) {
+				continue
+			}
+
+			if checkGPU && k[isGPUIndex] != inGPUQueue {
+				continue
+			}
+
 			dec := codec.NewDecoderBytes(v, ch)
 
 			var details *Details
 
 			dec.MustDecode(&details)
-
-			if accountingName != "" && details.ACCOUNTING_NAME != accountingName {
-				continue
-			}
-
-			if userName != "" && details.USER_NAME != userName {
-				continue
-			}
-
-			if queueName != "" && !strings.HasPrefix(details.QUEUE_NAME, queueName) {
-				continue
-			}
 
 			result.HitSet.Hits = append(result.HitSet.Hits, Hit{Details: *details})
 			result.HitSet.Total.Value++
@@ -753,7 +814,7 @@ func stringFromFilterValue(fv map[string]interface{}, key string) string {
 	return keyString
 }
 
-func queryToFilters(query *Query) (accountingName, userName, queueName string) {
+func queryToFilters(query *Query) (accountingName, userName []byte, checkGPU bool) {
 	for _, val := range query.Query.Bool.Filter {
 		mp, ok := val["match_phrase"]
 		if !ok {
@@ -762,12 +823,16 @@ func queryToFilters(query *Query) (accountingName, userName, queueName string) {
 
 		thisStr := stringFromFilterValue(mp, "ACCOUNTING_NAME")
 		if thisStr != "" {
-			accountingName = thisStr
+			if b, err := fixedWidthGroup(thisStr); err == nil {
+				accountingName = b
+			}
 		}
 
 		thisStr = stringFromFilterValue(mp, "USER_NAME")
 		if thisStr != "" {
-			userName = thisStr
+			if b, err := fixedWidthUser(thisStr); err == nil {
+				userName = b
+			}
 		}
 	}
 
@@ -778,8 +843,8 @@ func queryToFilters(query *Query) (accountingName, userName, queueName string) {
 		}
 
 		thisStr := stringFromFilterValue(p, "QUEUE_NAME")
-		if thisStr != "" {
-			queueName = thisStr
+		if thisStr == "gpu" {
+			checkGPU = true
 
 			break
 		}
