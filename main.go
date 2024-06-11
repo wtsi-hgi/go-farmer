@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -49,6 +50,7 @@ const (
 	inGPUQueue             = byte(2)
 	isGPUIndex             = endOfUserIndex
 	lengthEncodeLength     = 4
+	detailsBufferLength    = 16 * 1024
 
 	testMode       = false
 	useMapPopulate = false
@@ -751,12 +753,20 @@ func Scroll(l *lru.Cache[string, *Result], dbPath string, client *es.Client, ind
 	return result, nil
 }
 
-func searchLocal(dbPath string, query *Query) (*Result, error) {
-	// ldb, err := NewLocalDB(dbPath)
-	// if err != nil {
-	// 	return nil, err
-	// }
+type LocalFilter struct {
+	BOM             string
+	LTE             time.Time
+	GTE             time.Time
+	LTEKey          []byte
+	GTEKey          []byte
+	accountingName  []byte
+	userName        []byte
+	checkAccounting bool
+	checkUser       bool
+	checkGPU        bool
+}
 
+func NewLocalFilter(query *Query) (*LocalFilter, error) {
 	lte, gte, err := parseRange(query.Query.Bool.Filter)
 	if err != nil {
 		return nil, err
@@ -767,118 +777,219 @@ func searchLocal(dbPath string, query *Query) (*Result, error) {
 		return nil, err
 	}
 
-	lteKey, gteKey := i64tob(lte.Unix()), i64tob(gte.Unix())
+	filter := &LocalFilter{
+		BOM: bom,
+		LTE: lte,
+		GTE: gte,
+	}
 
-	accountingName, userName, checkGPU := queryToFilters(query)
-	checkAccounting := len(accountingName) > 0
-	checkUser := len(userName) > 0
+	filter.LTEKey, filter.GTEKey = i64tob(lte.Unix()), i64tob(gte.Unix())
 
-	ch := new(codec.BincHandle)
+	filter.accountingName, filter.userName, filter.checkGPU = queryToFilters(query)
+	filter.checkAccounting = len(filter.accountingName) > 0
+	filter.checkUser = len(filter.userName) > 0
 
+	return filter, nil
+}
+
+func (f *LocalFilter) PassesAccountingName(val []byte) bool {
+	if !f.checkAccounting {
+		return true
+	}
+
+	return bytes.Equal(val, f.accountingName)
+}
+
+func (f *LocalFilter) PassesUserName(val []byte) bool {
+	if !f.checkUser {
+		return true
+	}
+
+	return bytes.Equal(val, f.userName)
+}
+
+func (f *LocalFilter) PassesGPUCheck(val byte) bool {
+	if !f.checkGPU {
+		return true
+	}
+
+	return val == inGPUQueue
+}
+
+func searchLocal(dbPath string, query *Query) (*Result, error) {
+	// ldb, err := NewLocalDB(dbPath)
+	// if err != nil {
+	// 	return nil, err
+	// }
+	filter, err := NewLocalFilter(query)
+	if err != nil {
+		return nil, err
+	}
+
+	detailsCh := make(chan *Details)
+	errCh := make(chan error)
 	result := &Result{}
 
-	currentDay := gte
+	doneCh := make(chan struct{})
+	go func() {
+		for details := range detailsCh {
+			result.HitSet.Hits = append(result.HitSet.Hits, Hit{Details: *details})
+			result.HitSet.Total.Value++
+		}
+
+		close(doneCh)
+	}()
+
+	errsDoneCh := make(chan struct{})
+	go func() {
+		for err := range errCh {
+			fmt.Printf("error: %s\n", err)
+		}
+
+		close(errsDoneCh)
+	}()
+
+	var wg sync.WaitGroup
+
+	currentDay := filter.GTE
+
+	for {
+		fileKey := currentDay.UTC().Format(dateFormat)
+		dbFilePath := filepath.Join(dbPath, fmt.Sprintf("%s.%s", fileKey, filter.BOM))
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			searchLocalFile(dbFilePath, filter, detailsCh, errCh)
+		}()
+
+		currentDay = currentDay.Add(24 * time.Hour)
+		if currentDay.After(filter.LTE) {
+			break
+		}
+	}
+
+	wg.Wait()
+	close(detailsCh)
+	close(errCh)
+
+	<-doneCh
+	<-errsDoneCh
+
+	return result, nil
+}
+
+func searchLocalFile(dbFilePath string, filter *LocalFilter, detailsCh chan *Details, errCh chan error) {
+	f, err := os.Open(dbFilePath)
+	if err != nil {
+		errCh <- err
+
+		return
+	}
+
+	ch := new(codec.BincHandle)
 
 	tsBuf := make([]byte, timeStampLength)
 	accBuf := make([]byte, accountingNameMaxWidth)
 	userBuf := make([]byte, userNameMaxWidth)
 	lenBuf := make([]byte, lengthEncodeLength)
-	detailsBuf := make([]byte, fileBufferSize)
+	detailsBuf := make([]byte, detailsBufferLength)
+
+	br := bufio.NewReaderSize(f, fileBufferSize)
+
+	t := time.Now()
+	total := 0
 
 	for {
-		fileKey := currentDay.UTC().Format(dateFormat)
-		dbFilePath := filepath.Join(dbPath, fmt.Sprintf("%s.%s", fileKey, bom))
-		fmt.Printf("%s\n", dbFilePath)
+		total++
 
-		f, err := os.Open(dbFilePath)
+		_, err = io.ReadFull(br, tsBuf)
 		if err != nil {
-			return nil, err
-		}
+			if !errors.Is(err, io.EOF) {
+				errCh <- err
 
-		br := bufio.NewReaderSize(f, fileBufferSize)
-
-		for {
-			_, err = io.ReadFull(br, tsBuf)
-			if err != nil {
-				if !errors.Is(err, io.EOF) {
-					return nil, err
-				}
-
-				break
+				return
 			}
 
-			if bytes.Compare(tsBuf, lteKey) > 0 {
-				break
-			}
-
-			var passesFilter bool
-
-			if bytes.Compare(tsBuf, gteKey) >= 0 {
-				passesFilter = true
-			}
-
-			_, err = io.ReadFull(br, accBuf)
-			if err != nil {
-				return nil, err
-			}
-
-			if passesFilter && checkAccounting && !bytes.Equal(accBuf, accountingName) {
-				passesFilter = false
-			}
-
-			_, err = io.ReadFull(br, userBuf)
-			if err != nil {
-				return nil, err
-			}
-
-			if passesFilter && checkUser && !bytes.Equal(userBuf, userName) {
-				passesFilter = false
-			}
-
-			gpuByte, err := br.ReadByte()
-			if err != nil {
-				return nil, err
-			}
-
-			if passesFilter && checkGPU && gpuByte != inGPUQueue {
-				passesFilter = false
-			}
-
-			_, err = io.ReadFull(br, lenBuf)
-			if err != nil {
-				return nil, err
-			}
-
-			detailsLength := btoi(lenBuf)
-
-			buf := detailsBuf[0:detailsLength]
-
-			_, err = io.ReadFull(br, buf)
-			if err != nil {
-				return nil, err
-			}
-
-			if passesFilter {
-				dec := codec.NewDecoderBytes(buf, ch)
-
-				var details *Details
-
-				dec.MustDecode(&details)
-
-				result.HitSet.Hits = append(result.HitSet.Hits, Hit{Details: *details})
-				result.HitSet.Total.Value++
-			}
-		}
-
-		f.Close()
-
-		currentDay = currentDay.Add(24 * time.Hour)
-		if currentDay.After(lte) {
 			break
+		}
+
+		if bytes.Compare(tsBuf, filter.LTEKey) > 0 {
+			break
+		}
+
+		var passesFilter bool
+
+		if bytes.Compare(tsBuf, filter.GTEKey) >= 0 {
+			passesFilter = true
+		}
+
+		_, err = io.ReadFull(br, accBuf)
+		if err != nil {
+			errCh <- err
+
+			return
+		}
+
+		if passesFilter && !filter.PassesAccountingName(accBuf) {
+			passesFilter = false
+		}
+
+		_, err = io.ReadFull(br, userBuf)
+		if err != nil {
+			errCh <- err
+
+			return
+		}
+
+		if passesFilter && !filter.PassesUserName(userBuf) {
+			passesFilter = false
+		}
+
+		gpuByte, err := br.ReadByte()
+		if err != nil {
+			errCh <- err
+
+			return
+		}
+
+		if passesFilter && !filter.PassesGPUCheck(gpuByte) {
+			passesFilter = false
+		}
+
+		_, err = io.ReadFull(br, lenBuf)
+		if err != nil {
+			errCh <- err
+
+			return
+		}
+
+		detailsLength := btoi(lenBuf)
+
+		buf := detailsBuf[0:detailsLength]
+
+		_, err = io.ReadFull(br, buf)
+		if err != nil {
+			errCh <- err
+
+			return
+		}
+
+		if passesFilter {
+			dec := codec.NewDecoderBytes(buf, ch)
+
+			var details *Details
+
+			dec.MustDecode(&details)
+
+			detailsCh <- details
 		}
 	}
 
-	return result, nil
+	fmt.Printf("%s took %s for %d hits\n", dbFilePath, time.Since(t), total)
+
+	f.Close()
 }
 
 func searchBolt(db *bolt.DB, query *Query) (*Result, error) {
