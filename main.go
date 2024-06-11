@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/dgryski/go-farm"
@@ -18,8 +19,6 @@ import (
 	"github.com/ugorji/go/codec"
 	bolt "go.etcd.io/bbolt"
 	"gopkg.in/yaml.v3"
-
-	"compress/flate"
 )
 
 const (
@@ -404,7 +403,7 @@ func openDB(path string) (*bolt.DB, error) {
 	db, err := bolt.Open(path, 0600, &bolt.Options{
 		PreLoadFreelist: true,
 		FreelistType:    bolt.FreelistMapType,
-		// MmapFlags:       syscall.MAP_POPULATE,
+		MmapFlags:       syscall.MAP_POPULATE,
 	})
 	if err != nil {
 		return nil, err
@@ -482,13 +481,11 @@ func storeInLocalDB(db *bolt.DB, result *Result) error {
 			key = append(key, bom...)
 			key = append(key, []byte(hit.ID)...)
 
-			var buf bytes.Buffer
-			out, _ := flate.NewWriter(&buf, flate.DefaultCompression)
-			enc := codec.NewEncoder(out, ch)
+			var encoded []byte
+			enc := codec.NewEncoderBytes(&encoded, ch)
 			enc.MustEncode(hit.Details)
-			out.Close()
 
-			err = b.Put(key, buf.Bytes())
+			err = b.Put(key, encoded)
 			if err != nil {
 				return err
 			}
@@ -632,14 +629,11 @@ func searchBolt(db *bolt.DB, query *Query) (*Result, error) {
 				continue
 			}
 
-			buf := bytes.NewBuffer(v)
-			reader := flate.NewReader(buf)
-			dec := codec.NewDecoder(reader, ch)
+			dec := codec.NewDecoderBytes(v, ch)
 
 			var details *Details
 
 			dec.MustDecode(&details)
-			reader.Close()
 
 			if accountingName != "" && details.ACCOUNTING_NAME != accountingName {
 				continue
