@@ -33,6 +33,9 @@ const (
 	bomMaxWidth         = 34
 	startOfBomIndex     = timeStampLength
 	endOfBomIndex       = startOfBomIndex + bomMaxWidth
+
+	testMode       = true
+	useMapPopulate = false
 )
 
 type Query struct {
@@ -328,14 +331,19 @@ func main() {
 	// }
 	// fmt.Printf("took: %s\n\n", time.Since(t))
 
+	lte := "2024-06-04T00:00:00Z"
+	gte := "2024-05-04T00:00:00Z"
+	if testMode {
+		lte = "2024-06-09T23:55:00Z"
+		gte = "2024-06-09T23:50:00Z"
+	}
+
 	filter := Filter{
 		{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
 		{"range": map[string]interface{}{
 			"timestamp": map[string]string{
-				"lte": "2024-06-04T00:00:00Z",
-				"gte": "2024-05-04T00:00:00Z",
-				// "lte":    "2024-06-09T23:55:00Z",
-				// "gte":    "2024-06-09T23:50:00Z",
+				"lte":    lte,
+				"gte":    gte,
 				"format": "strict_date_optional_time",
 			},
 		}},
@@ -400,11 +408,16 @@ func main() {
 }
 
 func openDB(path string) (*bolt.DB, error) {
-	db, err := bolt.Open(path, 0600, &bolt.Options{
+	opts := &bolt.Options{
 		PreLoadFreelist: true,
 		FreelistType:    bolt.FreelistMapType,
-		MmapFlags:       syscall.MAP_POPULATE,
-	})
+	}
+
+	if useMapPopulate {
+		opts.MmapFlags = syscall.MAP_POPULATE
+	}
+
+	db, err := bolt.Open(path, 0600, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -422,13 +435,18 @@ func openDB(path string) (*bolt.DB, error) {
 }
 
 func initDB(db *bolt.DB, client *es.Client) error {
+	lte := "2024-06-10T00:00:00Z"
+	gte := "2024-05-01T00:00:00Z"
+	if testMode {
+		gte = "2024-06-09T23:50:00Z"
+	}
+
 	filter := Filter{
 		{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
 		{"range": map[string]interface{}{
 			"timestamp": map[string]string{
-				"lte": "2024-06-10T00:00:00Z",
-				// "gte": "2024-06-09T23:50:00Z",
-				"gte":    "2024-05-01T00:00:00Z",
+				"lte":    lte,
+				"gte":    gte,
 				"format": "strict_date_optional_time",
 			},
 		}},
