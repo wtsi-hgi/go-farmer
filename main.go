@@ -770,6 +770,8 @@ func searchLocal(dbPath string, query *Query) (*Result, error) {
 	lteKey, gteKey := i64tob(lte.Unix()), i64tob(gte.Unix())
 
 	accountingName, userName, checkGPU := queryToFilters(query)
+	checkAccounting := len(accountingName) > 0
+	checkUser := len(userName) > 0
 
 	ch := new(codec.BincHandle)
 
@@ -799,7 +801,6 @@ func searchLocal(dbPath string, query *Query) (*Result, error) {
 			_, err = io.ReadFull(br, tsBuf)
 			if err != nil {
 				if !errors.Is(err, io.EOF) {
-					fmt.Printf("a\n")
 					return nil, err
 				}
 
@@ -818,27 +819,24 @@ func searchLocal(dbPath string, query *Query) (*Result, error) {
 
 			_, err = io.ReadFull(br, accBuf)
 			if err != nil {
-				fmt.Printf("b\n")
 				return nil, err
 			}
 
-			if passesFilter && len(accountingName) > 0 && !bytes.Equal(accBuf, accountingName) {
+			if passesFilter && checkAccounting && !bytes.Equal(accBuf, accountingName) {
 				passesFilter = false
 			}
 
 			_, err = io.ReadFull(br, userBuf)
 			if err != nil {
-				fmt.Printf("c\n")
 				return nil, err
 			}
 
-			if passesFilter && len(userName) > 0 && !bytes.Equal(userBuf, userName) {
+			if passesFilter && checkUser && !bytes.Equal(userBuf, userName) {
 				passesFilter = false
 			}
 
 			gpuByte, err := br.ReadByte()
 			if err != nil {
-				fmt.Printf("d\n")
 				return nil, err
 			}
 
@@ -848,7 +846,6 @@ func searchLocal(dbPath string, query *Query) (*Result, error) {
 
 			_, err = io.ReadFull(br, lenBuf)
 			if err != nil {
-				fmt.Printf("e\n")
 				return nil, err
 			}
 
@@ -858,7 +855,6 @@ func searchLocal(dbPath string, query *Query) (*Result, error) {
 
 			_, err = io.ReadFull(br, buf)
 			if err != nil {
-				fmt.Printf("f %d\n", detailsLength)
 				return nil, err
 			}
 
