@@ -18,6 +18,7 @@ import (
 
 	bstd "github.com/deneonet/benc"
 	"github.com/deneonet/benc/bpre"
+	"github.com/deneonet/benc/bunsafe"
 	"github.com/dgryski/go-farm"
 	es "github.com/elastic/go-elasticsearch/v7"
 	"github.com/elastic/go-elasticsearch/v7/esapi"
@@ -34,7 +35,7 @@ const (
 	dateFormat        = "2006-01-02"
 	dbDirPerms        = 0770
 	fileBufferSize    = 4 * 1024 * 1024
-	desiredFlatDBSize = 4 * 1024 * 1024
+	desiredFlatDBSize = 32 * 1024 * 1024
 
 	timeStampLength        = 8
 	bomMaxWidth            = 34
@@ -249,7 +250,7 @@ func (d *Details) deserialize(buf []byte) error {
 		err error
 	)
 
-	n, d.ACCOUNTING_NAME, err = bstd.UnmarshalString(0, buf)
+	n, d.ACCOUNTING_NAME, err = bunsafe.UnmarshalString(0, buf)
 	if err != nil {
 		return err
 	}
@@ -259,12 +260,12 @@ func (d *Details) deserialize(buf []byte) error {
 		return err
 	}
 
-	n, d.BOM, err = bstd.UnmarshalString(n, buf)
+	n, d.BOM, err = bunsafe.UnmarshalString(n, buf)
 	if err != nil {
 		return err
 	}
 
-	n, d.Command, err = bstd.UnmarshalString(n, buf)
+	n, d.Command, err = bunsafe.UnmarshalString(n, buf)
 	if err != nil {
 		return err
 	}
@@ -274,7 +275,7 @@ func (d *Details) deserialize(buf []byte) error {
 		return err
 	}
 
-	n, d.Job, err = bstd.UnmarshalString(n, buf)
+	n, d.Job, err = bunsafe.UnmarshalString(n, buf)
 	if err != nil {
 		return err
 	}
@@ -299,7 +300,7 @@ func (d *Details) deserialize(buf []byte) error {
 		return err
 	}
 
-	n, d.QUEUE_NAME, err = bstd.UnmarshalString(n, buf)
+	n, d.QUEUE_NAME, err = bunsafe.UnmarshalString(n, buf)
 	if err != nil {
 		return err
 	}
@@ -314,7 +315,7 @@ func (d *Details) deserialize(buf []byte) error {
 		return err
 	}
 
-	n, d.USER_NAME, err = bstd.UnmarshalString(n, buf)
+	n, d.USER_NAME, err = bunsafe.UnmarshalString(n, buf)
 	if err != nil {
 		return err
 	}
