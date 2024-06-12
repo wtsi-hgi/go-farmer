@@ -11,15 +11,17 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 
+	bstd "github.com/deneonet/benc"
+	"github.com/deneonet/benc/bpre"
 	"github.com/dgryski/go-farm"
 	es "github.com/elastic/go-elasticsearch/v7"
 	"github.com/elastic/go-elasticsearch/v7/esapi"
 	lru "github.com/hashicorp/golang-lru/v2"
-	"github.com/ugorji/go/codec"
 	"gopkg.in/yaml.v3"
 )
 
@@ -43,8 +45,8 @@ const (
 	lengthEncodeLength     = 4
 	detailsBufferLength    = 16 * 1024
 
-	testMode = false
-	debug    = true
+	testPeriod = 0 // 1 is 10 mins, 2 is 3 days, otherwise over a month
+	debug      = false
 )
 
 type Query struct {
@@ -147,8 +149,8 @@ type HitSet struct {
 }
 
 type Hit struct {
-	ID      string  `json:"_id"`
-	Details Details `json:"_source"`
+	ID      string   `json:"_id"`
+	Details *Details `json:"_source"`
 }
 
 type Details struct {
@@ -196,6 +198,138 @@ type Details struct {
 	USER_NAME          string
 	WASTED_CPU_SECONDS float64
 	WASTED_MB_SECONDS  float64
+}
+
+func (d *Details) serialize() ([]byte, error) {
+	n := bstd.SizeString(d.ACCOUNTING_NAME)
+	n += bstd.SizeInt()
+	n += bstd.SizeString(d.BOM)
+	n += bstd.SizeString(d.Command)
+	n += bstd.SizeString(d.JOB_NAME)
+	n += bstd.SizeString(d.Job)
+	n += bstd.SizeInt()
+	n += bstd.SizeInt()
+	n += bstd.SizeInt()
+	n += bstd.SizeInt()
+	n += bstd.SizeString(d.QUEUE_NAME)
+	n += bstd.SizeInt()
+	n += bstd.SizeInt64()
+	n += bstd.SizeString(d.USER_NAME)
+	n += bstd.SizeFloat64()
+	n += bstd.SizeFloat64()
+
+	bpre.Reset()
+
+	n, encoded := bstd.Marshal(n)
+	n = bstd.MarshalString(n, encoded, d.ACCOUNTING_NAME)
+	n = bstd.MarshalInt(n, encoded, d.AVAIL_CPU_TIME_SEC)
+	n = bstd.MarshalString(n, encoded, d.BOM)
+	n = bstd.MarshalString(n, encoded, d.Command)
+	n = bstd.MarshalString(n, encoded, d.JOB_NAME)
+	n = bstd.MarshalString(n, encoded, d.Job)
+	n = bstd.MarshalInt(n, encoded, d.MEM_REQUESTED_MB)
+	n = bstd.MarshalInt(n, encoded, d.MEM_REQUESTED_MB_SEC)
+	n = bstd.MarshalInt(n, encoded, d.NUM_EXEC_PROCS)
+	n = bstd.MarshalInt(n, encoded, d.PENDING_TIME_SEC)
+	n = bstd.MarshalString(n, encoded, d.QUEUE_NAME)
+	n = bstd.MarshalInt(n, encoded, d.RUN_TIME_SEC)
+	n = bstd.MarshalInt64(n, encoded, d.Timestamp)
+	n = bstd.MarshalString(n, encoded, d.USER_NAME)
+	n = bstd.MarshalFloat64(n, encoded, d.WASTED_CPU_SECONDS)
+	n = bstd.MarshalFloat64(n, encoded, d.WASTED_MB_SECONDS)
+
+	err := bstd.VerifyMarshal(n, encoded)
+
+	return encoded, err
+}
+
+func (d *Details) deserialize(buf []byte) error {
+	var (
+		n   int
+		err error
+	)
+
+	n, d.ACCOUNTING_NAME, err = bstd.UnmarshalString(0, buf)
+	if err != nil {
+		return err
+	}
+
+	n, d.AVAIL_CPU_TIME_SEC, err = bstd.UnmarshalInt(n, buf)
+	if err != nil {
+		return err
+	}
+
+	n, d.BOM, err = bstd.UnmarshalString(n, buf)
+	if err != nil {
+		return err
+	}
+
+	n, d.Command, err = bstd.UnmarshalString(n, buf)
+	if err != nil {
+		return err
+	}
+
+	n, d.JOB_NAME, err = bstd.UnmarshalString(n, buf)
+	if err != nil {
+		return err
+	}
+
+	n, d.Job, err = bstd.UnmarshalString(n, buf)
+	if err != nil {
+		return err
+	}
+
+	n, d.MEM_REQUESTED_MB, err = bstd.UnmarshalInt(n, buf)
+	if err != nil {
+		return err
+	}
+
+	n, d.MEM_REQUESTED_MB_SEC, err = bstd.UnmarshalInt(n, buf)
+	if err != nil {
+		return err
+	}
+
+	n, d.NUM_EXEC_PROCS, err = bstd.UnmarshalInt(n, buf)
+	if err != nil {
+		return err
+	}
+
+	n, d.PENDING_TIME_SEC, err = bstd.UnmarshalInt(n, buf)
+	if err != nil {
+		return err
+	}
+
+	n, d.QUEUE_NAME, err = bstd.UnmarshalString(n, buf)
+	if err != nil {
+		return err
+	}
+
+	n, d.RUN_TIME_SEC, err = bstd.UnmarshalInt(n, buf)
+	if err != nil {
+		return err
+	}
+
+	n, d.Timestamp, err = bstd.UnmarshalInt64(n, buf)
+	if err != nil {
+		return err
+	}
+
+	n, d.USER_NAME, err = bstd.UnmarshalString(n, buf)
+	if err != nil {
+		return err
+	}
+
+	n, d.WASTED_CPU_SECONDS, err = bstd.UnmarshalFloat64(n, buf)
+	if err != nil {
+		return err
+	}
+
+	n, d.WASTED_MB_SECONDS, err = bstd.UnmarshalFloat64(n, buf)
+	if err != nil {
+		return err
+	}
+
+	return bstd.VerifyUnmarshal(n, buf)
 }
 
 type Aggregations struct {
@@ -337,9 +471,11 @@ func main() {
 
 	lte := "2024-06-04T00:00:00Z"
 	gte := "2024-05-04T00:00:00Z"
-	if testMode {
+	if testPeriod == 1 {
 		lte = "2024-06-09T23:55:00Z"
 		gte = "2024-06-09T23:50:00Z"
+	} else if testPeriod == 2 {
+		gte = "2024-06-03T00:00:00Z"
 	}
 
 	filter := Filter{
@@ -367,7 +503,7 @@ func main() {
 
 	if len(result.HitSet.Hits) > 0 {
 		fmt.Printf("num hits: %+v\n", len(result.HitSet.Hits))
-		// fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0])
+		fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0].Details)
 	}
 
 	if len(result.Aggregations.Stats.Buckets) > 0 {
@@ -414,8 +550,11 @@ func main() {
 func initDB(dbPath string, client *es.Client) error {
 	lte := "2024-06-10T00:00:00Z"
 	gte := "2024-05-01T00:00:00Z"
-	if testMode {
+	if testPeriod == 1 {
 		gte = "2024-06-09T23:50:00Z"
+	} else if testPeriod == 2 {
+		lte = "2024-06-04T00:00:00Z"
+		gte = "2024-06-02T00:00:00Z"
 	}
 
 	filter := Filter{
@@ -587,9 +726,10 @@ func storeInLocalDB(dbPath string, result *Result) (err error) {
 		}
 	}()
 
-	var buf bytes.Buffer
+	// var buf bytes.Buffer
 
-	ch := new(codec.BincHandle)
+	// buf := make([]byte, detailsBufferLength)
+	bpre.Marshal(detailsBufferLength)
 
 	for _, hit := range result.HitSet.Hits {
 		group, errf := fixedWidthGroup(hit.Details.ACCOUNTING_NAME)
@@ -615,12 +755,13 @@ func storeInLocalDB(dbPath string, result *Result) (err error) {
 			return
 		}
 
-		buf.Reset()
-		enc := codec.NewEncoder(&buf, ch)
-		enc.MustEncode(hit.Details)
-		encoded := buf.Bytes()
+		encoded, errs := hit.Details.serialize()
+		if errs != nil {
+			err = errs
+			return
+		}
 
-		errs := fdb.Store(
+		errs = fdb.Store(
 			i64tob(hit.Details.Timestamp),
 			group,
 			user,
@@ -853,7 +994,7 @@ func searchLocal(dbPath string, query *Query) (*Result, error) {
 	doneCh := make(chan struct{})
 	go func() {
 		for details := range detailsCh {
-			result.HitSet.Hits = append(result.HitSet.Hits, Hit{Details: *details})
+			result.HitSet.Hits = append(result.HitSet.Hits, Hit{Details: details})
 			result.HitSet.Total.Value++
 		}
 
@@ -910,8 +1051,6 @@ func searchLocalFile(dbFilePath string, filter *LocalFilter, detailsCh chan *Det
 		return
 	}
 
-	ch := new(codec.BincHandle)
-
 	tsBuf := make([]byte, timeStampLength)
 	accBuf := make([]byte, accountingNameMaxWidth)
 	userBuf := make([]byte, userNameMaxWidth)
@@ -922,6 +1061,7 @@ func searchLocalFile(dbFilePath string, filter *LocalFilter, detailsCh chan *Det
 
 	t := time.Now()
 	total := 0
+	numGoroutines := runtime.NumGoroutine()
 
 	for {
 		total++
@@ -999,18 +1139,21 @@ func searchLocalFile(dbFilePath string, filter *LocalFilter, detailsCh chan *Det
 		}
 
 		if passesFilter {
-			dec := codec.NewDecoderBytes(buf, ch)
+			d := &Details{}
 
-			var details *Details
+			err = d.deserialize(buf)
+			if err != nil {
+				errCh <- err
 
-			dec.MustDecode(&details)
+				return
+			}
 
-			detailsCh <- details
+			detailsCh <- d
 		}
 	}
 
 	if debug {
-		fmt.Printf("%s took %s for %d hits\n", dbFilePath, time.Since(t), total)
+		fmt.Printf("%s took %s for %d hits, starting with %d goroutines\n", dbFilePath, time.Since(t), total, numGoroutines)
 	}
 
 	f.Close()

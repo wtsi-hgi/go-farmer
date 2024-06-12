@@ -5,8 +5,10 @@ go 1.22.0
 require github.com/elastic/go-elasticsearch/v7 v7.17.10
 
 require (
+	github.com/deneonet/benc v1.0.8
 	github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13
 	github.com/hashicorp/golang-lru/v2 v2.0.7
-	github.com/ugorji/go/codec v1.2.12
 	gopkg.in/yaml.v3 v3.0.1
 )
+
+require golang.org/x/exp v0.0.0-20231110203233-9a3e6036ecaa // indirect
