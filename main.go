@@ -137,8 +137,8 @@ type Config struct {
 type Result struct {
 	ScrollID     string `json:"_scroll_id"`
 	Took         int
-	TimedOut     bool   `json:"timed_out"`
-	HitSet       HitSet `json:"hits"`
+	TimedOut     bool    `json:"timed_out"`
+	HitSet       *HitSet `json:"hits"`
 	Aggregations Aggregations
 }
 
@@ -147,6 +147,17 @@ type HitSet struct {
 		Value int
 	}
 	Hits []Hit
+	mu   sync.Mutex
+}
+
+func (h *HitSet) AddHit(id string, details *Details) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.Hits = append(h.Hits, Hit{
+		ID:      id,
+		Details: details,
+	})
 }
 
 type Hit struct {
@@ -988,19 +999,10 @@ func searchLocal(dbPath string, query *Query) (*Result, error) {
 		return nil, err
 	}
 
-	detailsCh := make(chan *Details)
 	errCh := make(chan error)
-	result := &Result{}
-
-	doneCh := make(chan struct{})
-	go func() {
-		for details := range detailsCh {
-			result.HitSet.Hits = append(result.HitSet.Hits, Hit{Details: details})
-			result.HitSet.Total.Value++
-		}
-
-		close(doneCh)
-	}()
+	result := &Result{
+		HitSet: &HitSet{},
+	}
 
 	errsDoneCh := make(chan struct{})
 	go func() {
@@ -1024,7 +1026,7 @@ func searchLocal(dbPath string, query *Query) (*Result, error) {
 			go func(dbFilePath string) {
 				defer wg.Done()
 
-				searchLocalFile(dbFilePath, filter, detailsCh, errCh)
+				searchLocalFile(dbFilePath, filter, result.HitSet, errCh)
 			}(path)
 		}
 
@@ -1035,16 +1037,13 @@ func searchLocal(dbPath string, query *Query) (*Result, error) {
 	}
 
 	wg.Wait()
-	close(detailsCh)
 	close(errCh)
-
-	<-doneCh
 	<-errsDoneCh
 
 	return result, nil
 }
 
-func searchLocalFile(dbFilePath string, filter *LocalFilter, detailsCh chan *Details, errCh chan error) {
+func searchLocalFile(dbFilePath string, filter *LocalFilter, hitset *HitSet, errCh chan error) {
 	f, err := os.Open(dbFilePath)
 	if err != nil {
 		errCh <- err
@@ -1149,7 +1148,7 @@ func searchLocalFile(dbFilePath string, filter *LocalFilter, detailsCh chan *Det
 				return
 			}
 
-			detailsCh <- d
+			hitset.AddHit("", d)
 		}
 	}
 
