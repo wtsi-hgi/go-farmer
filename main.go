@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -32,7 +33,7 @@ const (
 	scrollTime        = 1 * time.Minute
 	cacheSize         = 128
 	bucketName        = "hits"
-	dateFormat        = "2006-01-02"
+	dateFormat        = "2006/01/02"
 	dbDirPerms        = 0770
 	fileBufferSize    = 4 * 1024 * 1024
 	desiredFlatDBSize = 32 * 1024 * 1024
@@ -515,7 +516,7 @@ func main() {
 
 	if len(result.HitSet.Hits) > 0 {
 		fmt.Printf("num hits: %+v\n", len(result.HitSet.Hits))
-		fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0].Details)
+		// fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0].Details)
 	}
 
 	if len(result.Aggregations.Stats.Buckets) > 0 {
@@ -628,7 +629,12 @@ func NewFlatDB(path string) (*FlatDB, error) {
 }
 
 func createFileAndWriter(path string, index int) (*os.File, *bufio.Writer, error) {
-	f, err := os.Create(fmt.Sprintf("%s.%d", path, index))
+	err := os.MkdirAll(path, dbDirPerms)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	f, err := os.Create(fmt.Sprintf("%s/%d", path, index))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -696,7 +702,7 @@ func NewLocalDB(dir string) (*LocalDB, error) {
 }
 
 func (l *LocalDB) GetFlatDB(timestamp int64, bom string) (*FlatDB, error) {
-	key := fmt.Sprintf("%s.%s", time.Unix(timestamp, 0).UTC().Format(dateFormat), bom)
+	key := fmt.Sprintf("%s/%s", time.Unix(timestamp, 0).UTC().Format(dateFormat), bom)
 
 	fdb, ok := l.dbs[key]
 	if !ok {
@@ -738,9 +744,6 @@ func storeInLocalDB(dbPath string, result *Result) (err error) {
 		}
 	}()
 
-	// var buf bytes.Buffer
-
-	// buf := make([]byte, detailsBufferLength)
 	bpre.Marshal(detailsBufferLength)
 
 	for _, hit := range result.HitSet.Hits {
@@ -976,22 +979,21 @@ func (f *LocalFilter) PassesGPUCheck(val byte) bool {
 }
 
 func searchLocal(dbPath string, query *Query) (*Result, error) {
-	entries, err := os.ReadDir(dbPath)
-	if err != nil {
-		return nil, err
-	}
+	dateBOMDirs := make(map[string][]string)
 
-	basenames := make(map[string][]string)
-
-	for _, entry := range entries {
-		ext := filepath.Ext(entry.Name())
-		if ext == "" {
-			continue
+	err := filepath.WalkDir(dbPath, func(path string, d fs.DirEntry, err error) error {
+		if !d.Type().IsRegular() {
+			return nil
 		}
 
-		name := strings.TrimSuffix(entry.Name(), ext)
+		dir := filepath.Dir(path)
 
-		basenames[name] = append(basenames[name], filepath.Join(dbPath, entry.Name()))
+		dateBOMDirs[dir] = append(dateBOMDirs[dir], path)
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	filter, err := NewLocalFilter(query)
@@ -1019,7 +1021,7 @@ func searchLocal(dbPath string, query *Query) (*Result, error) {
 
 	for {
 		fileKey := currentDay.UTC().Format(dateFormat)
-		paths := basenames[fmt.Sprintf("%s.%s", fileKey, filter.BOM)]
+		paths := dateBOMDirs[fmt.Sprintf("%s/%s/%s", dbPath, fileKey, filter.BOM)]
 
 		for _, path := range paths {
 			wg.Add(1)
