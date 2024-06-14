@@ -29,12 +29,11 @@ package elasticsearch
 import (
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
-
-const modePermUser = 0770
 
 func TestElasticSearchClient(t *testing.T) {
 	host := os.Getenv("FARMER_TEST_HOST")
@@ -42,8 +41,9 @@ func TestElasticSearchClient(t *testing.T) {
 	password := os.Getenv("FARMER_TEST_PASSWORD")
 	scheme := os.Getenv("FARMER_TEST_SCHEME")
 	portStr := os.Getenv("FARMER_TEST_PORT")
+	index := os.Getenv("FARMER_TEST_INDEX")
 
-	if host == "" || username == "" || password == "" || scheme == "" || portStr == "" {
+	if host == "" || username == "" || password == "" || scheme == "" || portStr == "" || index == "" {
 		SkipConvey("Skipping elasticsearch client test without FARMER_TEST_* env vars set", t, func() {})
 		return
 	}
@@ -71,6 +71,24 @@ func TestElasticSearchClient(t *testing.T) {
 			info, err := client.Info()
 			So(err, ShouldBeNil)
 			So(info.Version.Number, ShouldEqual, "7.17.6")
+
+			Convey("And given an elasticsearch aggregation query json", func() {
+				json := `{"aggs":{"stats":{"multi_terms":{"terms":[{"field":"ACCOUNTING_NAME"},{"field":"NUM_EXEC_PROCS"},{"field":"Job"}],"size":1000},"aggs":{"cpu_avail_sec":{"sum":{"field":"AVAIL_CPU_TIME_SEC"}},"cpu_wasted_sec":{"sum":{"field":"WASTED_CPU_SECONDS"}}}}},"size":0,"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-05-04T00:10:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}}]}}}`
+
+				r := strings.NewReader(json)
+
+				query, err := NewQuery(r)
+				So(err, ShouldBeNil)
+
+				Convey("You can do a search request", func() {
+					result, err := client.Search(index, query)
+					So(err, ShouldBeNil)
+					So(result, ShouldNotBeNil)
+					So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 6)
+					So(len(result.HitSet.Hits), ShouldEqual, 0)
+					So(result.HitSet.Total.Value, ShouldEqual, 403)
+				})
+			})
 		})
 	})
 }

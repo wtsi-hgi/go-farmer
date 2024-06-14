@@ -27,72 +27,71 @@
 package elasticsearch
 
 import (
+	"bytes"
 	"encoding/json"
-	"fmt"
-
-	es "github.com/elastic/go-elasticsearch/v7"
+	"io"
 )
 
-type Config struct {
-	Host     string
-	Username string
-	Password string
-	Scheme   string
-	Port     int
+type Query struct {
+	Size  int          `json:"size"`
+	Aggs  *Aggs        `json:"aggs,omitempty"`
+	Query *QueryFilter `json:"query,omitempty"`
+	Sort  []string     `json:"sort,omitempty"`
 }
 
-type Client struct {
-	client *es.Client
+type Aggs struct {
+	Stats AggsStats `json:"stats"`
 }
 
-func NewClient(config Config) (*Client, error) {
-	cfg := es.Config{
-		Addresses: []string{
-			fmt.Sprintf("%s://%s:%d", config.Scheme, config.Host, config.Port),
-		},
-		Username: config.Username,
-		Password: config.Password,
-	}
-
-	client, err := es.NewClient(cfg)
-
-	return &Client{client: client}, err
+type AggsStats struct {
+	MultiTerms MultiTerms           `json:"multi_terms"`
+	Aggs       map[string]AggsField `json:"aggs"`
 }
 
-type ElasticInfo struct {
-	Version struct {
-		Number string
-	}
+type MultiTerms struct {
+	Terms []Field `json:"terms"`
+	Size  int     `json:"size"`
 }
 
-func (c *Client) Info() (*ElasticInfo, error) {
-	resp, err := c.client.Info()
-
-	// bodyBytes, _ := io.ReadAll(resp.Body)
-	// fmt.Println(string(bodyBytes))
-
-	info := &ElasticInfo{}
-
-	if err := json.NewDecoder(resp.Body).Decode(info); err != nil {
-		return nil, err
-	}
-
-	return info, err
+type Field struct {
+	Field string `json:"field"`
 }
 
-func (c *Client) Search(index string, query *Query) (*Result, error) {
-	qbody, err := query.AsBody()
+type AggsField struct {
+	Sum            *Field          `json:"sum,omitempty"`
+	ScriptedMetric *ScriptedMetric `json:"scripted_metric,omitempty"`
+}
+
+type ScriptedMetric struct {
+	InitScript    string      `json:"init_script"`
+	MapScript     string      `json:"map_script"`
+	CombineScript string      `json:"combine_script"`
+	ReduceScript  string      `json:"reduce_script"`
+	Params        interface{} `json:"params"`
+}
+
+type QueryFilter struct {
+	Bool QFBool `json:"bool"`
+}
+
+type QFBool struct {
+	Filter Filter `json:"filter"`
+}
+
+type Filter []map[string]map[string]interface{}
+
+func NewQuery(raw io.Reader) (*Query, error) {
+	query := &Query{}
+	err := json.NewDecoder(raw).Decode(query)
+
+	return query, err
+}
+
+func (q *Query) AsBody() (*bytes.Reader, error) {
+	queryBytes, err := json.Marshal(q)
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := c.client.Search(
-		c.client.Search.WithIndex(index),
-		c.client.Search.WithBody(qbody),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	return parseResultResponse(resp)
+	return bytes.NewReader(queryBytes), nil
 }
