@@ -89,6 +89,27 @@ func TestElasticSearchClient(t *testing.T) {
 					So(result.HitSet.Total.Value, ShouldEqual, 403)
 				})
 			})
+
+			Convey("And given an elasticsearch non-aggregation query json", func() {
+				json := `{"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-05-04T00:10:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}}]}}}
+`
+				//TODO: and query params such as size and _source
+				//url: "http://elasticsearch.internal.sanger.ac.uk:19200/user-data-ssg-isg-lsf-analytics-%2A/_search?_source=USER_NAME%2CQUEUE_NAME%2CJob%2CPENDING_TIME_SEC%2CRUN_TIME_SEC&size=10000&ignore_unavailable=false&scroll=1m&track_total_hits=true"
+
+				r := strings.NewReader(json)
+
+				query, err := NewQuery(r)
+				So(err, ShouldBeNil)
+
+				Convey("You can do a search request", func() {
+					result, err := client.Search(index, query)
+					So(err, ShouldBeNil)
+					So(result, ShouldNotBeNil)
+					So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 0)
+					So(len(result.HitSet.Hits), ShouldEqual, 12)
+					So(result.HitSet.Total.Value, ShouldEqual, 403)
+				})
+			})
 		})
 	})
 }
