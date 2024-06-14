@@ -410,77 +410,79 @@ func main() {
 		return
 	}
 
-	// t := time.Now()
+	t := time.Now()
 
-	// bomQuery := &Query{
-	// 	Aggs: &Aggs{
-	// 		Stats: AggsStats{
-	// 			MultiTerms: MultiTerms{
-	// 				Terms: []Field{
-	// 					{Field: "ACCOUNTING_NAME"},
-	// 					{Field: "NUM_EXEC_PROCS"},
-	// 					{Field: "Job"},
-	// 				},
-	// 				Size: 1000,
-	// 			},
-	// 			Aggs: map[string]AggsField{
-	// 				"cpu_avail_sec": {
-	// 					Sum: &Field{Field: "AVAIL_CPU_TIME_SEC"},
-	// 				},
-	// 				"cpu_wasted_sec": {
-	// 					Sum: &Field{Field: "WASTED_CPU_SECONDS"},
-	// 				},
-	// 				"mem_avail_mb_sec": {
-	// 					Sum: &Field{Field: "MEM_REQUESTED_MB_SEC"},
-	// 				},
-	// 				"mem_wasted_mb_sec": {
-	// 					Sum: &Field{Field: "WASTED_MB_SECONDS"},
-	// 				},
-	// 				"wasted_cost": {
-	// 					ScriptedMetric: &ScriptedMetric{
-	// 						InitScript:    "state.costs = []",
-	// 						MapScript:     "double cpu_cost = doc.WASTED_CPU_SECONDS.value * params.cpu_second; double mem_cost = doc.WASTED_MB_SECONDS.value * params.mb_second; state.costs.add(Math.max(cpu_cost, mem_cost))",
-	// 						CombineScript: "double total = 0; for (t in state.costs) { total += t } return total",
-	// 						ReduceScript:  "double total = 0; for (a in states) { total += a } return total",
-	// 						Params: map[string]float64{
-	// 							"cpu_second": 7.0556e-07,
-	// 							"mb_second":  5.8865e-11,
-	// 						},
-	// 					},
-	// 				},
-	// 			},
-	// 		},
-	// 	},
-	// 	Query: &QueryFilter{
-	// 		Bool: QFBool{
-	// 			Filter: Filter{
-	// 				{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
-	// 				{"range": map[string]interface{}{
-	// 					"timestamp": map[string]string{
-	// 						"lte":    "2024-06-04T00:00:00Z",
-	// 						"gte":    "2024-05-04T00:00:00Z",
-	// 						"format": "strict_date_optional_time",
-	// 					},
-	// 				}},
-	// 				{"match_phrase": map[string]interface{}{"BOM": "Human Genetics"}},
-	// 			},
-	// 		},
-	// 	},
-	// }
+	bomQuery := &Query{
+		Aggs: &Aggs{
+			Stats: AggsStats{
+				MultiTerms: MultiTerms{
+					Terms: []Field{
+						{Field: "ACCOUNTING_NAME"},
+						{Field: "NUM_EXEC_PROCS"},
+						{Field: "Job"},
+					},
+					Size: 1000,
+				},
+				Aggs: map[string]AggsField{
+					"cpu_avail_sec": {
+						Sum: &Field{Field: "AVAIL_CPU_TIME_SEC"},
+					},
+					"cpu_wasted_sec": {
+						Sum: &Field{Field: "WASTED_CPU_SECONDS"},
+					},
+					"mem_avail_mb_sec": {
+						Sum: &Field{Field: "MEM_REQUESTED_MB_SEC"},
+					},
+					"mem_wasted_mb_sec": {
+						Sum: &Field{Field: "WASTED_MB_SECONDS"},
+					},
+					"wasted_cost": {
+						ScriptedMetric: &ScriptedMetric{
+							InitScript:    "state.costs = []",
+							MapScript:     "double cpu_cost = doc.WASTED_CPU_SECONDS.value * params.cpu_second; double mem_cost = doc.WASTED_MB_SECONDS.value * params.mb_second; state.costs.add(Math.max(cpu_cost, mem_cost))",
+							CombineScript: "double total = 0; for (t in state.costs) { total += t } return total",
+							ReduceScript:  "double total = 0; for (a in states) { total += a } return total",
+							Params: map[string]float64{
+								"cpu_second": 7.0556e-07,
+								"mb_second":  5.8865e-11,
+							},
+						},
+					},
+				},
+			},
+		},
+		Query: &QueryFilter{
+			Bool: QFBool{
+				Filter: Filter{
+					{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
+					{"range": map[string]interface{}{
+						"timestamp": map[string]string{
+							"lte":    "2024-06-04T00:00:00Z",
+							"gte":    "2024-05-04T00:00:00Z",
+							"format": "strict_date_optional_time",
+						},
+					}},
+					{"match_phrase": map[string]interface{}{"BOM": "Human Genetics"}},
+				},
+			},
+		},
+	}
 
-	// result, err := Search(l, client, index, bomQuery)
-	// if err != nil {
-	// 	log.Fatalf("Error searching: %s", err)
-	// }
+	result, err := Search(l, client, index, bomQuery)
+	if err != nil {
+		log.Fatalf("Error searching: %s", err)
+	}
 
-	// if len(result.HitSet.Hits) > 0 {
-	// 	fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0])
-	// }
+	if len(result.HitSet.Hits) > 0 {
+		fmt.Printf("num hits: %+v\n", len(result.HitSet.Hits))
+		// fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0].Details)
+	}
 
-	// if len(result.Aggregations.Stats.Buckets) > 0 {
-	// 	fmt.Printf("first agg: %+v\n", result.Aggregations.Stats.Buckets[0])
-	// }
-	// fmt.Printf("took: %s\n\n", time.Since(t))
+	if len(result.Aggregations.Stats.Buckets) > 0 {
+		fmt.Printf("num aggs: %+v\n", len(result.Aggregations.Stats.Buckets))
+		// fmt.Printf("first agg: %+v\n", result.Aggregations.Stats.Buckets[0])
+	}
+	fmt.Printf("took: %s\n\n", time.Since(t))
 
 	lte := "2024-06-04T00:00:00Z"
 	gte := "2024-05-04T00:00:00Z"
@@ -504,8 +506,8 @@ func main() {
 		{"match_phrase": map[string]interface{}{"ACCOUNTING_NAME": "hgi"}},
 	}
 
-	t := time.Now()
-	result, err := Scroll(l, dbPath, client, index, filter)
+	t = time.Now()
+	result, err = Scroll(l, dbPath, client, index, filter)
 	if err != nil {
 		log.Fatalf("Error searching: %s", err)
 	}
@@ -520,44 +522,48 @@ func main() {
 	}
 
 	if len(result.Aggregations.Stats.Buckets) > 0 {
-		fmt.Printf("first agg: %+v\n", result.Aggregations.Stats.Buckets[0])
+		fmt.Printf("num aggs: %+v\n", len(result.Aggregations.Stats.Buckets))
+		// fmt.Printf("first agg: %+v\n", result.Aggregations.Stats.Buckets[0])
 	}
 	fmt.Printf("took: %s\n\n", time.Since(t))
 
-	// t = time.Now()
-	// result, err = Search(l, client, index, bomQuery)
-	// if err != nil {
-	// 	log.Fatalf("Error searching: %s", err)
-	// }
+	t = time.Now()
+	result, err = Search(l, client, index, bomQuery)
+	if err != nil {
+		log.Fatalf("Error searching: %s", err)
+	}
 
-	// if len(result.HitSet.Hits) > 0 {
-	// 	fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0])
-	// }
+	if len(result.HitSet.Hits) > 0 {
+		fmt.Printf("num hits: %+v\n", len(result.HitSet.Hits))
+		// fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0].Details)
+	}
 
-	// if len(result.Aggregations.Stats.Buckets) > 0 {
-	// 	fmt.Printf("first agg: %+v\n", result.Aggregations.Stats.Buckets[0])
-	// }
-	// fmt.Printf("took: %s\n\n", time.Since(t))
+	if len(result.Aggregations.Stats.Buckets) > 0 {
+		fmt.Printf("num aggs: %+v\n", len(result.Aggregations.Stats.Buckets))
+		// fmt.Printf("first agg: %+v\n", result.Aggregations.Stats.Buckets[0])
+	}
+	fmt.Printf("took: %s\n\n", time.Since(t))
 
-	// t = time.Now()
-	// result, err = Scroll(l, client, index, filter)
-	// if err != nil {
-	// 	log.Fatalf("Error searching: %s", err)
-	// }
+	t = time.Now()
+	result, err = Scroll(l, dbPath, client, index, filter)
+	if err != nil {
+		log.Fatalf("Error searching: %s", err)
+	}
 
-	// if result == nil {
-	// 	return
-	// }
+	if result == nil {
+		return
+	}
 
-	// if len(result.HitSet.Hits) > 0 {
-	// 	fmt.Printf("num hits: %+v\n", len(result.HitSet.Hits))
-	// 	fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0])
-	// }
+	if len(result.HitSet.Hits) > 0 {
+		fmt.Printf("num hits: %+v\n", len(result.HitSet.Hits))
+		fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0])
+	}
 
-	// if len(result.Aggregations.Stats.Buckets) > 0 {
-	// 	fmt.Printf("first agg: %+v\n", result.Aggregations.Stats.Buckets[0])
-	// }
-	// fmt.Printf("took: %s\n\n", time.Since(t))
+	if len(result.Aggregations.Stats.Buckets) > 0 {
+		fmt.Printf("num aggs: %+v\n", len(result.Aggregations.Stats.Buckets))
+		// fmt.Printf("first agg: %+v\n", result.Aggregations.Stats.Buckets[0])
+	}
+	fmt.Printf("took: %s\n\n", time.Since(t))
 }
 
 func initDB(dbPath string, client *es.Client) error {
