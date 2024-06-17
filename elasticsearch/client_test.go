@@ -38,7 +38,58 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-const mockVersionJSON = `{"version":{"number":"7.17.6"}}`
+const (
+	testAggQuery         = `{"aggs":{"stats":{"multi_terms":{"terms":[{"field":"ACCOUNTING_NAME"},{"field":"NUM_EXEC_PROCS"},{"field":"Job"}],"size":1000},"aggs":{"cpu_avail_sec":{"sum":{"field":"AVAIL_CPU_TIME_SEC"}},"cpu_wasted_sec":{"sum":{"field":"WASTED_CPU_SECONDS"}}}}},"size":0,"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-05-04T00:10:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}}]}}}`
+	testAggQueryResponse = `{
+		"hits": {
+			"total":{"value":2}
+		},
+		"aggregations": {
+			"stats": {
+				"buckets": [
+					{"key_as_string": "a"},
+					{"key_as_string": "b"},
+					{"key_as_string": "c"},
+					{"key_as_string": "d"},
+					{"key_as_string": "e"},
+					{"key_as_string": "f"}
+				]
+			}
+		}
+	}`
+
+	testNonAggQuery                 = `{"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-05-04T00:10:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}}]}}}`
+	testNonAggQueryResponseZeroSize = `{
+		"hits": {
+			"total":{"value":2},
+			"hits": []
+		},
+		"aggregations": {}
+	}`
+	testNonAggQueryResponseSize = `{
+		"hits": {
+			"total":{"value":2},
+			"hits": [
+				{"_id": "1", "_source": { "ACCOUNTING_NAME": "pathdev", "USER_NAME": "pathpipe", "QUEUE_NAME": "transfer" } },
+				{"_id": "2", "_source": { "ACCOUNTING_NAME": "a2", "USER_NAME": "u2", "QUEUE_NAME": "q2" } }
+			]
+		},
+		"aggregations": {}
+	}`
+	testNonAggQueryResponseSizeSources = `{
+		"hits": {
+			"total":{"value":2},
+			"hits": [
+				{"_id": "1", "_source": { "USER_NAME": "pathpipe", "QUEUE_NAME": "transfer" } },
+				{"_id": "2", "_source": { "USER_NAME": "u2", "QUEUE_NAME": "q2" } }
+			]
+		},
+		"aggregations": {}
+	}`
+
+	mockVersionJSON     = `{"version":{"number":"7.17.6"}}`
+	testExpectedVersion = "7.17.6"
+)
 
 type mockTransport struct{}
 
@@ -53,52 +104,15 @@ func (m mockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 
 		if query.Aggs != nil {
-			jsonStr = `{
-				"hits": {
-					"total":{"value":2}
-				},
-				"aggregations": {
-					"stats": {
-						"buckets": [
-							{"key_as_string": "a"},
-							{"key_as_string": "b"},
-							{"key_as_string": "c"}
-						]
-					}
-				}
-			}`
+			jsonStr = testAggQueryResponse
 		} else {
 			if query.Size == 0 {
-				jsonStr = `{
-					"hits": {
-						"total":{"value":2},
-						"hits": []
-					},
-					"aggregations": {}
-				}`
+				jsonStr = testNonAggQueryResponseZeroSize
 			} else {
 				if len(query.Source) == 0 {
-					jsonStr = `{
-						"hits": {
-							"total":{"value":2},
-							"hits": [
-								{"_id": "1", "_source": { "ACCOUNTING_NAME": "a1", "USER_NAME": "u1", "QUEUE_NAME": "q1" } },
-								{"_id": "2", "_source": { "ACCOUNTING_NAME": "a2", "USER_NAME": "u2", "QUEUE_NAME": "q2" } }
-							]
-						},
-						"aggregations": {}
-					}`
+					jsonStr = testNonAggQueryResponseSize
 				} else {
-					jsonStr = `{
-						"hits": {
-							"total":{"value":2},
-							"hits": [
-								{"_id": "1", "_source": { "USER_NAME": "u1", "QUEUE_NAME": "q1" } },
-								{"_id": "2", "_source": { "USER_NAME": "u2", "QUEUE_NAME": "q2" } }
-							]
-						},
-						"aggregations": {}
-					}`
+					jsonStr = testNonAggQueryResponseSizeSources
 				}
 			}
 		}
@@ -112,8 +126,6 @@ func (m mockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func TestElasticSearchClientMock(t *testing.T) {
-	index := "mockindex"
-
 	Convey("Given some config", t, func() {
 		mockTrans := mockTransport{}
 
@@ -126,84 +138,83 @@ func TestElasticSearchClientMock(t *testing.T) {
 			transport: mockTrans,
 		}
 
-		Convey("You can create an elasticsearch client", func() {
-			client, err := NewClient(config)
+		doClientTests(t, config, "mockindex", 2)
+	})
+}
+
+func doClientTests(t *testing.T, config Config, index string, expectedNumHits int) {
+	t.Helper()
+
+	Convey("You can create an elasticsearch client", func() {
+		client, err := NewClient(config)
+		So(err, ShouldBeNil)
+		So(client, ShouldNotBeNil)
+
+		info, err := client.Info()
+		So(err, ShouldBeNil)
+		So(info.Version.Number, ShouldEqual, testExpectedVersion)
+
+		Convey("And given an elasticsearch aggregation query json", func() {
+			jsonStr := testAggQuery
+			r := strings.NewReader(jsonStr)
+			query, err := NewQuery(r)
 			So(err, ShouldBeNil)
-			So(client, ShouldNotBeNil)
 
-			info, err := client.Info()
-			So(err, ShouldBeNil)
-			So(info.Version.Number, ShouldEqual, "7.17.6")
-
-			expectedNumHits := 2
-
-			Convey("And given an elasticsearch aggregation query json", func() {
-				jsonStr := `{"aggs":{"stats":{"multi_terms":{"terms":[{"field":"ACCOUNTING_NAME"},{"field":"NUM_EXEC_PROCS"},{"field":"Job"}],"size":1000},"aggs":{"cpu_avail_sec":{"sum":{"field":"AVAIL_CPU_TIME_SEC"}},"cpu_wasted_sec":{"sum":{"field":"WASTED_CPU_SECONDS"}}}}},"size":0,"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-05-04T00:10:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}}]}}}`
-
-				r := strings.NewReader(jsonStr)
-
-				query, err := NewQuery(r)
+			Convey("You can do a search request", func() {
+				result, err := client.Search(index, query)
 				So(err, ShouldBeNil)
+				So(result, ShouldNotBeNil)
+				So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 6)
+				So(len(result.HitSet.Hits), ShouldEqual, 0)
+				So(result.HitSet.Total.Value, ShouldEqual, expectedNumHits)
+			})
+		})
 
-				Convey("You can do a search request", func() {
-					result, err := client.Search(index, query)
-					So(err, ShouldBeNil)
-					So(result, ShouldNotBeNil)
-					So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 3)
-					So(len(result.HitSet.Hits), ShouldEqual, 0)
-					So(result.HitSet.Total.Value, ShouldEqual, expectedNumHits)
-				})
+		Convey("And given an elasticsearch non-aggregation query json", func() {
+			jsonStr := testNonAggQuery
+			r := strings.NewReader(jsonStr)
+			query, err := NewQuery(r)
+			So(err, ShouldBeNil)
+
+			Convey("You can do a search request", func() {
+				result, err := client.Search(index, query)
+				So(err, ShouldBeNil)
+				So(result, ShouldNotBeNil)
+				So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 0)
+				So(len(result.HitSet.Hits), ShouldEqual, 0)
+				So(result.HitSet.Total.Value, ShouldEqual, expectedNumHits)
 			})
 
-			Convey("And given an elasticsearch non-aggregation query json", func() {
-				jsonStr := `{"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-05-04T00:10:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}}]}}}
-`
-
-				r := strings.NewReader(jsonStr)
-
-				query, err := NewQuery(r)
+			Convey("Search results change based on size and source", func() {
+				query.Size = MaxSize
+				result, err := client.Search(index, query)
 				So(err, ShouldBeNil)
+				So(result, ShouldNotBeNil)
+				So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 0)
+				So(len(result.HitSet.Hits), ShouldEqual, expectedNumHits)
+				So(result.HitSet.Total.Value, ShouldEqual, expectedNumHits)
+				So(result.HitSet.Hits[0].Details.ACCOUNTING_NAME, ShouldEqual, "pathdev")
+				So(result.HitSet.Hits[0].Details.USER_NAME, ShouldEqual, "pathpipe")
+				So(result.HitSet.Hits[0].Details.QUEUE_NAME, ShouldEqual, "transfer")
 
-				Convey("You can do a search request", func() {
-					result, err := client.Search(index, query)
-					So(err, ShouldBeNil)
-					So(result, ShouldNotBeNil)
-					So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 0)
-					So(len(result.HitSet.Hits), ShouldEqual, 0)
-					So(result.HitSet.Total.Value, ShouldEqual, expectedNumHits)
-				})
+				j, err := json.Marshal(result.HitSet.Hits[0].Details)
+				So(err, ShouldBeNil)
+				So(string(j), ShouldContainSubstring, "ACCOUNTING_NAME")
+				So(string(j), ShouldContainSubstring, "USER_NAME")
 
-				Convey("Search results change based on size and source", func() {
-					query.Size = MaxSize
-					result, err := client.Search(index, query)
-					So(err, ShouldBeNil)
-					So(result, ShouldNotBeNil)
-					So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 0)
-					So(len(result.HitSet.Hits), ShouldEqual, expectedNumHits)
-					So(result.HitSet.Total.Value, ShouldEqual, expectedNumHits)
-					So(result.HitSet.Hits[0].Details.ACCOUNTING_NAME, ShouldEqual, "a1")
-					So(result.HitSet.Hits[0].Details.USER_NAME, ShouldEqual, "u1")
-					So(result.HitSet.Hits[0].Details.QUEUE_NAME, ShouldEqual, "q1")
+				query.Source = []string{"USER_NAME", "QUEUE_NAME"}
+				result, err = client.Search(index, query)
+				So(err, ShouldBeNil)
+				So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 0)
+				So(len(result.HitSet.Hits), ShouldEqual, expectedNumHits)
+				So(result.HitSet.Hits[0].Details.ACCOUNTING_NAME, ShouldBeBlank)
+				So(result.HitSet.Hits[0].Details.USER_NAME, ShouldNotBeBlank)
+				So(result.HitSet.Hits[0].Details.QUEUE_NAME, ShouldNotBeBlank)
 
-					j, err := json.Marshal(result.HitSet.Hits[0].Details)
-					So(err, ShouldBeNil)
-					So(string(j), ShouldContainSubstring, "ACCOUNTING_NAME")
-					So(string(j), ShouldContainSubstring, "USER_NAME")
-
-					query.Source = []string{"USER_NAME", "QUEUE_NAME"}
-					result, err = client.Search(index, query)
-					So(err, ShouldBeNil)
-					So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 0)
-					So(len(result.HitSet.Hits), ShouldEqual, expectedNumHits)
-					So(result.HitSet.Hits[0].Details.ACCOUNTING_NAME, ShouldBeBlank)
-					So(result.HitSet.Hits[0].Details.USER_NAME, ShouldNotBeBlank)
-					So(result.HitSet.Hits[0].Details.QUEUE_NAME, ShouldNotBeBlank)
-
-					j, err = json.Marshal(result.HitSet.Hits[0].Details)
-					So(err, ShouldBeNil)
-					So(string(j), ShouldNotContainSubstring, "ACCOUNTING_NAME")
-					So(string(j), ShouldContainSubstring, "USER_NAME")
-				})
+				j, err = json.Marshal(result.HitSet.Hits[0].Details)
+				So(err, ShouldBeNil)
+				So(string(j), ShouldNotContainSubstring, "ACCOUNTING_NAME")
+				So(string(j), ShouldContainSubstring, "USER_NAME")
 			})
 		})
 	})
@@ -237,85 +248,6 @@ func TestElasticSearchClientReal(t *testing.T) {
 			Port:     port,
 		}
 
-		Convey("You can create an elasticsearch client", func() {
-			client, err := NewClient(config)
-			So(err, ShouldBeNil)
-			So(client, ShouldNotBeNil)
-
-			info, err := client.Info()
-			So(err, ShouldBeNil)
-			So(info.Version.Number, ShouldEqual, "7.17.6")
-
-			expectedNumHits := 403
-
-			Convey("And given an elasticsearch aggregation query json", func() {
-				jsonStr := `{"aggs":{"stats":{"multi_terms":{"terms":[{"field":"ACCOUNTING_NAME"},{"field":"NUM_EXEC_PROCS"},{"field":"Job"}],"size":1000},"aggs":{"cpu_avail_sec":{"sum":{"field":"AVAIL_CPU_TIME_SEC"}},"cpu_wasted_sec":{"sum":{"field":"WASTED_CPU_SECONDS"}}}}},"size":0,"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-05-04T00:10:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}}]}}}`
-
-				r := strings.NewReader(jsonStr)
-
-				query, err := NewQuery(r)
-				So(err, ShouldBeNil)
-
-				Convey("You can do a search request", func() {
-					result, err := client.Search(index, query)
-					So(err, ShouldBeNil)
-					So(result, ShouldNotBeNil)
-					So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 6)
-					So(len(result.HitSet.Hits), ShouldEqual, 0)
-					So(result.HitSet.Total.Value, ShouldEqual, expectedNumHits)
-				})
-			})
-
-			Convey("And given an elasticsearch non-aggregation query json", func() {
-				jsonStr := `{"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-05-04T00:10:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}}]}}}
-`
-
-				r := strings.NewReader(jsonStr)
-
-				query, err := NewQuery(r)
-				So(err, ShouldBeNil)
-
-				Convey("You can do a search request", func() {
-					result, err := client.Search(index, query)
-					So(err, ShouldBeNil)
-					So(result, ShouldNotBeNil)
-					So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 0)
-					So(len(result.HitSet.Hits), ShouldEqual, 0)
-					So(result.HitSet.Total.Value, ShouldEqual, expectedNumHits)
-				})
-
-				Convey("Search results change based on size and source", func() {
-					query.Size = MaxSize
-					result, err := client.Search(index, query)
-					So(err, ShouldBeNil)
-					So(result, ShouldNotBeNil)
-					So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 0)
-					So(len(result.HitSet.Hits), ShouldEqual, expectedNumHits)
-					So(result.HitSet.Total.Value, ShouldEqual, expectedNumHits)
-					So(result.HitSet.Hits[0].Details.ACCOUNTING_NAME, ShouldNotBeBlank)
-					So(result.HitSet.Hits[0].Details.USER_NAME, ShouldNotBeBlank)
-					So(result.HitSet.Hits[0].Details.QUEUE_NAME, ShouldNotBeBlank)
-
-					j, err := json.Marshal(result.HitSet.Hits[0].Details)
-					So(err, ShouldBeNil)
-					So(string(j), ShouldContainSubstring, "ACCOUNTING_NAME")
-					So(string(j), ShouldContainSubstring, "USER_NAME")
-
-					query.Source = []string{"USER_NAME", "QUEUE_NAME"}
-					result, err = client.Search(index, query)
-					So(err, ShouldBeNil)
-					So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 0)
-					So(len(result.HitSet.Hits), ShouldEqual, expectedNumHits)
-					So(result.HitSet.Hits[0].Details.ACCOUNTING_NAME, ShouldBeBlank)
-					So(result.HitSet.Hits[0].Details.USER_NAME, ShouldNotBeBlank)
-					So(result.HitSet.Hits[0].Details.QUEUE_NAME, ShouldNotBeBlank)
-
-					j, err = json.Marshal(result.HitSet.Hits[0].Details)
-					So(err, ShouldBeNil)
-					So(string(j), ShouldNotContainSubstring, "ACCOUNTING_NAME")
-					So(string(j), ShouldContainSubstring, "USER_NAME")
-				})
-			})
-		})
+		doClientTests(t, config, index, 403)
 	})
 }
