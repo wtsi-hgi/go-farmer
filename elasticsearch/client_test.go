@@ -27,6 +27,7 @@
 package elasticsearch
 
 import (
+	"encoding/json"
 	"os"
 	"strconv"
 	"strings"
@@ -72,10 +73,12 @@ func TestElasticSearchClient(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(info.Version.Number, ShouldEqual, "7.17.6")
 
-			Convey("And given an elasticsearch aggregation query json", func() {
-				json := `{"aggs":{"stats":{"multi_terms":{"terms":[{"field":"ACCOUNTING_NAME"},{"field":"NUM_EXEC_PROCS"},{"field":"Job"}],"size":1000},"aggs":{"cpu_avail_sec":{"sum":{"field":"AVAIL_CPU_TIME_SEC"}},"cpu_wasted_sec":{"sum":{"field":"WASTED_CPU_SECONDS"}}}}},"size":0,"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-05-04T00:10:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}}]}}}`
+			expectedNumHits := 403
 
-				r := strings.NewReader(json)
+			Convey("And given an elasticsearch aggregation query json", func() {
+				jsonStr := `{"aggs":{"stats":{"multi_terms":{"terms":[{"field":"ACCOUNTING_NAME"},{"field":"NUM_EXEC_PROCS"},{"field":"Job"}],"size":1000},"aggs":{"cpu_avail_sec":{"sum":{"field":"AVAIL_CPU_TIME_SEC"}},"cpu_wasted_sec":{"sum":{"field":"WASTED_CPU_SECONDS"}}}}},"size":0,"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-05-04T00:10:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}}]}}}`
+
+				r := strings.NewReader(jsonStr)
 
 				query, err := NewQuery(r)
 				So(err, ShouldBeNil)
@@ -86,17 +89,17 @@ func TestElasticSearchClient(t *testing.T) {
 					So(result, ShouldNotBeNil)
 					So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 6)
 					So(len(result.HitSet.Hits), ShouldEqual, 0)
-					So(result.HitSet.Total.Value, ShouldEqual, 403)
+					So(result.HitSet.Total.Value, ShouldEqual, expectedNumHits)
 				})
 			})
 
 			Convey("And given an elasticsearch non-aggregation query json", func() {
-				json := `{"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-05-04T00:10:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}}]}}}
+				jsonStr := `{"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-05-04T00:10:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}}]}}}
 `
 				//TODO: and query params such as size and _source
 				//url: "http://elasticsearch.internal.sanger.ac.uk:19200/user-data-ssg-isg-lsf-analytics-%2A/_search?_source=USER_NAME%2CQUEUE_NAME%2CJob%2CPENDING_TIME_SEC%2CRUN_TIME_SEC&size=10000&ignore_unavailable=false&scroll=1m&track_total_hits=true"
 
-				r := strings.NewReader(json)
+				r := strings.NewReader(jsonStr)
 
 				query, err := NewQuery(r)
 				So(err, ShouldBeNil)
@@ -106,8 +109,40 @@ func TestElasticSearchClient(t *testing.T) {
 					So(err, ShouldBeNil)
 					So(result, ShouldNotBeNil)
 					So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 0)
-					So(len(result.HitSet.Hits), ShouldEqual, 12)
-					So(result.HitSet.Total.Value, ShouldEqual, 403)
+					So(len(result.HitSet.Hits), ShouldEqual, 0)
+					So(result.HitSet.Total.Value, ShouldEqual, expectedNumHits)
+				})
+
+				Convey("Search results change based on size and source", func() {
+					query.Size = MaxSize
+					result, err := client.Search(index, query)
+					So(err, ShouldBeNil)
+					So(result, ShouldNotBeNil)
+					So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 0)
+					So(len(result.HitSet.Hits), ShouldEqual, expectedNumHits)
+					So(result.HitSet.Total.Value, ShouldEqual, expectedNumHits)
+					So(result.HitSet.Hits[0].Details.ACCOUNTING_NAME, ShouldNotBeBlank)
+					So(result.HitSet.Hits[0].Details.USER_NAME, ShouldNotBeBlank)
+					So(result.HitSet.Hits[0].Details.QUEUE_NAME, ShouldNotBeBlank)
+
+					j, err := json.Marshal(result.HitSet.Hits[0].Details)
+					So(err, ShouldBeNil)
+					So(string(j), ShouldContainSubstring, "ACCOUNTING_NAME")
+					So(string(j), ShouldContainSubstring, "USER_NAME")
+
+					query.Source = []string{"USER_NAME", "QUEUE_NAME"}
+					result, err = client.Search(index, query)
+					So(err, ShouldBeNil)
+					So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 0)
+					So(len(result.HitSet.Hits), ShouldEqual, expectedNumHits)
+					So(result.HitSet.Hits[0].Details.ACCOUNTING_NAME, ShouldBeBlank)
+					So(result.HitSet.Hits[0].Details.USER_NAME, ShouldNotBeBlank)
+					So(result.HitSet.Hits[0].Details.QUEUE_NAME, ShouldNotBeBlank)
+
+					j, err = json.Marshal(result.HitSet.Hits[0].Details)
+					So(err, ShouldBeNil)
+					So(string(j), ShouldNotContainSubstring, "ACCOUNTING_NAME")
+					So(string(j), ShouldContainSubstring, "USER_NAME")
 				})
 			})
 		})

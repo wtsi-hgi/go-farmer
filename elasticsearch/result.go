@@ -54,16 +54,16 @@ type Hit struct {
 }
 
 type Details struct {
-	ACCOUNTING_NAME    string
-	AVAIL_CPU_TIME_SEC int
+	ACCOUNTING_NAME    string `json:",omitempty"`
+	AVAIL_CPU_TIME_SEC int    `json:",omitempty"`
 	// AVG_MEM_EFFICIENCY_PERCENT     float64
 	// AVRG_MEM_USAGE_MB              float64
 	// AVRG_MEM_USAGE_MB_SEC_COOKED   float64
 	// AVRG_MEM_USAGE_MB_SEC_RAW      float64
-	BOM string
+	BOM string `json:",omitempty"`
 	// CLUSTER_NAME                   string
 	// COOKED_CPU_TIME_SEC            float64
-	Command string
+	Command string `json:",omitempty"`
 	// END_TIME                       int
 	// EXEC_HOSTNAME                  []string
 	// Exit_Info                      int
@@ -71,33 +71,33 @@ type Details struct {
 	// JOB_ID          int
 	// JOB_ARRAY_INDEX int
 	// JOB_EXIT_STATUS                int
-	JOB_NAME string
-	Job      string
+	JOB_NAME string `json:",omitempty"`
+	Job      string `json:",omitempty"`
 	// Job_Efficiency_Percent         float64
 	// Job_Efficiency_Raw_Percent     float64
 	// MAX_MEM_EFFICIENCY_PERCENT     float64
 	// MAX_MEM_USAGE_MB               float64
 	// MAX_MEM_USAGE_MB_SEC_COOKED    float64
 	// MAX_MEM_USAGE_MB_SEC_RAW       float64
-	MEM_REQUESTED_MB     int
-	MEM_REQUESTED_MB_SEC int
-	NUM_EXEC_PROCS       int
+	MEM_REQUESTED_MB     int `json:",omitempty"`
+	MEM_REQUESTED_MB_SEC int `json:",omitempty"`
+	NUM_EXEC_PROCS       int `json:",omitempty"`
 	// NumberOfHosts                  int
 	// NumberOfUniqueHosts            int
-	PENDING_TIME_SEC int
+	PENDING_TIME_SEC int `json:",omitempty"`
 	// PROJECT_NAME                   string
-	QUEUE_NAME string
+	QUEUE_NAME string `json:",omitempty"`
 	// RAW_AVG_MEM_EFFICIENCY_PERCENT float64
 	// RAW_CPU_TIME_SEC               float64
 	// RAW_MAX_MEM_EFFICIENCY_PERCENT float64
 	// RAW_WASTED_CPU_SECONDS         float64
 	// RAW_WASTED_MB_SECONDS          float64
-	RUN_TIME_SEC int
+	RUN_TIME_SEC int `json:",omitempty"`
 	// SUBMIT_TIME  int
-	Timestamp          int64 `json:"timestamp"`
-	USER_NAME          string
-	WASTED_CPU_SECONDS float64
-	WASTED_MB_SECONDS  float64
+	Timestamp          int64   `json:"timestamp,omitempty"`
+	USER_NAME          string  `json:",omitempty"`
+	WASTED_CPU_SECONDS float64 `json:",omitempty"`
+	WASTED_MB_SECONDS  float64 `json:",omitempty"`
 }
 
 type Aggregations struct {

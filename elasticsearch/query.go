@@ -32,11 +32,14 @@ import (
 	"io"
 )
 
+const MaxSize = 10000
+
 type Query struct {
-	Size  int          `json:"size"`
-	Aggs  *Aggs        `json:"aggs,omitempty"`
-	Query *QueryFilter `json:"query,omitempty"`
-	Sort  []string     `json:"sort,omitempty"`
+	Size   int          `json:"size"`
+	Aggs   *Aggs        `json:"aggs,omitempty"`
+	Query  *QueryFilter `json:"query,omitempty"`
+	Sort   []string     `json:"sort,omitempty"`
+	Source []string     `json:"_source,omitempty"`
 }
 
 type Aggs struct {
