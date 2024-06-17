@@ -29,16 +29,18 @@ package elasticsearch
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 
 	es "github.com/elastic/go-elasticsearch/v7"
 )
 
 type Config struct {
-	Host     string
-	Username string
-	Password string
-	Scheme   string
-	Port     int
+	Host      string
+	Username  string
+	Password  string
+	Scheme    string
+	Port      int
+	transport http.RoundTripper
 }
 
 type Client struct {
@@ -50,8 +52,9 @@ func NewClient(config Config) (*Client, error) {
 		Addresses: []string{
 			fmt.Sprintf("%s://%s:%d", config.Scheme, config.Host, config.Port),
 		},
-		Username: config.Username,
-		Password: config.Password,
+		Username:  config.Username,
+		Password:  config.Password,
+		Transport: config.transport,
 	}
 
 	client, err := es.NewClient(cfg)
