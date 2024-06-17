@@ -31,6 +31,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -87,9 +88,14 @@ const (
 		"aggregations": {}
 	}`
 
+	testScollQueryManyHits = `{"size":10000,"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-05-04T00:00:00Z","gte":"2024-05-03T15:00:00Z","format":"strict_date_optional_time"}}}]}}}`
+	testScrollManyHitsNum  = 23581
+
 	mockVersionJSON     = `{"version":{"number":"7.17.6"}}`
 	testExpectedVersion = "7.17.6"
 )
+
+var scrollHitsReturned = 0
 
 type mockTransport struct{}
 
@@ -97,20 +103,38 @@ func (m mockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	jsonStr := mockVersionJSON
 
 	if req.Body != nil {
+		scrollParam := req.URL.Query().Get("scroll")
+		scrollRequest := filepath.Base(req.URL.Path) == "scroll"
 		query := &Query{}
 
 		if err := json.NewDecoder(req.Body).Decode(query); err != nil {
 			return nil, err
 		}
 
-		if query.Aggs != nil {
+		if scrollRequest {
+			jsonStr = m.scrollHits()
+		} else if query.Aggs != nil {
 			jsonStr = testAggQueryResponse
 		} else {
-			if query.Size == 0 {
+			if query.Size == 0 && scrollParam == "" {
 				jsonStr = testNonAggQueryResponseZeroSize
 			} else {
 				if len(query.Source) == 0 {
-					jsonStr = testNonAggQueryResponseSize
+					gte := ""
+
+					if query.Query != nil && len(query.Query.Bool.Filter) > 1 {
+						frange, found := query.Query.Bool.Filter[1]["range"]
+						if found {
+							timeStampFilter := frange["timestamp"].(map[string]interface{})
+							gte = timeStampFilter["gte"].(string)
+						}
+					}
+
+					if gte != "2024-05-03T15:00:00Z" {
+						jsonStr = testNonAggQueryResponseSize
+					} else {
+						jsonStr = m.scrollHits()
+					}
 				} else {
 					jsonStr = testNonAggQueryResponseSizeSources
 				}
@@ -123,6 +147,28 @@ func (m mockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		Body:       io.NopCloser(strings.NewReader(jsonStr)),
 		Header:     http.Header{"X-Elastic-Product": []string{"Elasticsearch"}},
 	}, nil
+}
+
+func (m mockTransport) scrollHits() string {
+	hitsToReturn := testScrollManyHitsNum - scrollHitsReturned
+	if hitsToReturn > MaxSize {
+		hitsToReturn = MaxSize
+		scrollHitsReturned += hitsToReturn
+	} else {
+		scrollHitsReturned = 0
+	}
+
+	return `{
+		"hits": {
+			"total":{"value":` + strconv.Itoa(testScrollManyHitsNum) + `},
+			"hits": [` +
+		strings.Repeat(`{"_id": "id", "_source": { "USER_NAME": "u" } },`, hitsToReturn-1) +
+		`
+				{"_id": "id", "_source": { "USER_NAME": "u" } }
+			]
+		},
+		"aggregations": {}
+	}`
 }
 
 func TestElasticSearchClientMock(t *testing.T) {
@@ -160,7 +206,7 @@ func doClientTests(t *testing.T, config Config, index string, expectedNumHits in
 			query, err := NewQuery(r)
 			So(err, ShouldBeNil)
 
-			Convey("You can do a search request", func() {
+			Convey("You can do a Search", func() {
 				result, err := client.Search(index, query)
 				So(err, ShouldBeNil)
 				So(result, ShouldNotBeNil)
@@ -176,12 +222,21 @@ func doClientTests(t *testing.T, config Config, index string, expectedNumHits in
 			query, err := NewQuery(r)
 			So(err, ShouldBeNil)
 
-			Convey("You can do a search request", func() {
+			Convey("You can do a Search", func() {
 				result, err := client.Search(index, query)
 				So(err, ShouldBeNil)
 				So(result, ShouldNotBeNil)
 				So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 0)
 				So(len(result.HitSet.Hits), ShouldEqual, 0)
+				So(result.HitSet.Total.Value, ShouldEqual, expectedNumHits)
+			})
+
+			Convey("You can do a Scroll which always returns all hits", func() {
+				result, err := client.Scroll(index, query)
+				So(err, ShouldBeNil)
+				So(result, ShouldNotBeNil)
+				So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 0)
+				So(len(result.HitSet.Hits), ShouldEqual, expectedNumHits)
 				So(result.HitSet.Total.Value, ShouldEqual, expectedNumHits)
 			})
 
@@ -215,6 +270,22 @@ func doClientTests(t *testing.T, config Config, index string, expectedNumHits in
 				So(err, ShouldBeNil)
 				So(string(j), ShouldNotContainSubstring, "ACCOUNTING_NAME")
 				So(string(j), ShouldContainSubstring, "USER_NAME")
+			})
+		})
+
+		Convey("And given an elasticsearch non-aggregation query json with more hits than max", func() {
+			jsonStr := testScollQueryManyHits
+			r := strings.NewReader(jsonStr)
+			query, err := NewQuery(r)
+			So(err, ShouldBeNil)
+
+			Convey("You can do a Scroll which auto-scrolls", func() {
+				result, err := client.Scroll(index, query)
+				So(err, ShouldBeNil)
+				So(result, ShouldNotBeNil)
+				So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 0)
+				So(len(result.HitSet.Hits), ShouldEqual, testScrollManyHitsNum)
+				So(result.HitSet.Total.Value, ShouldEqual, testScrollManyHitsNum)
 			})
 		})
 	})

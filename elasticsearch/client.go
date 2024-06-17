@@ -27,12 +27,16 @@
 package elasticsearch
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	es "github.com/elastic/go-elasticsearch/v7"
 )
+
+const scrollTime = 1 * time.Minute
 
 type Config struct {
 	Host      string
@@ -45,6 +49,7 @@ type Config struct {
 
 type Client struct {
 	client *es.Client
+	Error  error
 }
 
 func NewClient(config Config) (*Client, error) {
@@ -71,9 +76,6 @@ type ElasticInfo struct {
 func (c *Client) Info() (*ElasticInfo, error) {
 	resp, err := c.client.Info()
 
-	// bodyBytes, _ := io.ReadAll(resp.Body)
-	// fmt.Println(string(bodyBytes))
-
 	info := &ElasticInfo{}
 
 	if err := json.NewDecoder(resp.Body).Decode(info); err != nil {
@@ -98,4 +100,96 @@ func (c *Client) Search(index string, query *Query) (*Result, error) {
 	}
 
 	return parseResultResponse(resp)
+}
+
+func (c *Client) Scroll(index string, query *Query) (*Result, error) {
+	qbody, err := query.AsBody()
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.client.Search(
+		c.client.Search.WithIndex(index),
+		c.client.Search.WithBody(qbody),
+		c.client.Search.WithSize(MaxSize),
+		c.client.Search.WithScroll(scrollTime),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := parseResultResponse(resp)
+	if err != nil {
+		return nil, err
+	}
+
+	defer c.scroll_cleanup(result)
+
+	err = c.scroll_until_all_hits_received(result)
+
+	return result, err
+}
+
+func (c *Client) scroll_cleanup(result *Result) {
+	scrollIDBody, err := scrollIDBody(result.ScrollID)
+	if err != nil {
+		c.Error = err
+
+		return
+	}
+
+	_, err = c.client.ClearScroll(c.client.ClearScroll.WithBody(scrollIDBody))
+	if err != nil {
+		c.Error = err
+	}
+}
+
+func scrollIDBody(scrollID string) (*bytes.Buffer, error) {
+	scrollBytes, err := json.Marshal(&map[string]string{"scroll_id": scrollID})
+	if err != nil {
+		return nil, err
+	}
+
+	return bytes.NewBuffer(scrollBytes), nil
+}
+
+func (c *Client) scroll_until_all_hits_received(result *Result) error {
+	total := result.HitSet.Total.Value
+	if total <= MaxSize {
+		return nil
+	}
+
+	for keepScrolling := true; keepScrolling; keepScrolling = len(result.HitSet.Hits) < total {
+		err := c.scroll(result)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (c *Client) scroll(result *Result) error {
+	scrollIDBody, err := scrollIDBody(result.ScrollID)
+	if err != nil {
+		return err
+	}
+
+	resp, err := c.client.Scroll(
+		c.client.Scroll.WithBody(scrollIDBody),
+		c.client.Scroll.WithScroll(scrollTime),
+	)
+	if err != nil {
+		return err
+	}
+
+	scrollResult, err := parseResultResponse(resp)
+	if err != nil {
+		return err
+	}
+
+	result.HitSet.Hits = append(result.HitSet.Hits, scrollResult.HitSet.Hits...)
+	result.ScrollID = scrollResult.ScrollID
+
+	return nil
 }
