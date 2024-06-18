@@ -9,12 +9,12 @@ default: install
 
 build: export CGO_ENABLED = 0
 build:
-	go build -tags netgo ${LDFLAGS}
+	go build -o farmer -tags netgo ${LDFLAGS} 
 
 install: export CGO_ENABLED = 0
 install:
 	@rm -f ${GOPATH}/bin/farmer
-	@go install -tags netgo ${LDFLAGS}
+	@go build -o ${GOPATH}/bin/farmer -tags netgo ${LDFLAGS}
 	@echo installed to ${GOPATH}/bin/farmer
 
 test: export CGO_ENABLED = 0
@@ -39,13 +39,13 @@ clean:
 	@rm -f ./farmer
 	@rm -f ./dist.zip
 
-dist: export CGO_ENABLED = 0
-# go get -u github.com/gobuild/gopack
-# go get -u github.com/aktau/github-release
-dist:
-	gopack pack --os linux --arch amd64 -o linux-dist.zip
-	github-release release --tag ${TAG} --pre-release
-	github-release upload --tag ${TAG} --name farmer-linux-x86-64.zip --file linux-dist.zip
-	@rm -f farmer linux-dist.zip
+# dist: export CGO_ENABLED = 0
+# # go get -u github.com/gobuild/gopack
+# # go get -u github.com/aktau/github-release
+# dist:
+# 	gopack pack --os linux --arch amd64 -o linux-dist.zip
+# 	github-release release --tag ${TAG} --pre-release
+# 	github-release upload --tag ${TAG} --name farmer-linux-x86-64.zip --file linux-dist.zip
+# 	@rm -f farmer linux-dist.zip
 
 .PHONY: test race bench lint build install clean dist
