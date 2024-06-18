@@ -30,16 +30,24 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"net/http"
+	"path/filepath"
+	"strconv"
+	"strings"
 )
 
-const MaxSize = 10000
+const (
+	MaxSize    = 10000
+	searchPage = "_search"
+)
 
 type Query struct {
-	Size   int          `json:"size"`
-	Aggs   *Aggs        `json:"aggs,omitempty"`
-	Query  *QueryFilter `json:"query,omitempty"`
-	Sort   []string     `json:"sort,omitempty"`
-	Source []string     `json:"_source,omitempty"`
+	Size     int          `json:"size"`
+	Aggs     *Aggs        `json:"aggs,omitempty"`
+	Query    *QueryFilter `json:"query,omitempty"`
+	Sort     []string     `json:"sort,omitempty"`
+	Source   []string     `json:"_source,omitempty"`
+	isScroll bool
 }
 
 type Aggs struct {
@@ -83,6 +91,46 @@ type QFBool struct {
 
 type Filter []map[string]map[string]interface{}
 
+func NewQueryFromRequest(req *http.Request) (*Query, bool) {
+	if req.Method != http.MethodPost {
+		return nil, false
+	}
+
+	path := filepath.Base(req.URL.Path)
+	if path != searchPage {
+		return nil, false
+	}
+
+	if req.Body == nil {
+		return nil, false
+	}
+
+	query, err := NewQuery(req.Body)
+	if err != nil {
+		return nil, false
+	}
+
+	sizeParam := req.URL.Query().Get("size")
+	if sizeParam != "" {
+		size, err := strconv.Atoi(sizeParam)
+		if err == nil {
+			query.Size = size
+		}
+	}
+
+	sourceParam := req.URL.Query().Get("_source")
+	if sourceParam != "" {
+		query.Source = strings.Split(sourceParam, ",")
+	}
+
+	scrollParam := req.URL.Query().Get("scroll")
+	if scrollParam != "" {
+		query.isScroll = true
+	}
+
+	return query, true
+}
+
 func NewQuery(raw io.Reader) (*Query, error) {
 	query := &Query{}
 	err := json.NewDecoder(raw).Decode(query)
@@ -97,4 +145,8 @@ func (q *Query) AsBody() (*bytes.Reader, error) {
 	}
 
 	return bytes.NewReader(queryBytes), nil
+}
+
+func (q *Query) IsScroll() bool {
+	return q.isScroll
 }
