@@ -257,10 +257,10 @@ func doClientTests(t *testing.T, config Config, index string, expectedNumHits in
 				So(result.HitSet.Hits[0].Details.UserName, ShouldEqual, "pathpipe")
 				So(result.HitSet.Hits[0].Details.QueueName, ShouldEqual, "transfer")
 
-				j, err := json.Marshal(result.HitSet.Hits[0].Details)
+				jsonBytes, err := json.Marshal(result.HitSet.Hits[0].Details)
 				So(err, ShouldBeNil)
-				So(string(j), ShouldContainSubstring, "ACCOUNTING_NAME")
-				So(string(j), ShouldContainSubstring, "USER_NAME")
+				So(string(jsonBytes), ShouldContainSubstring, "ACCOUNTING_NAME")
+				So(string(jsonBytes), ShouldContainSubstring, "USER_NAME")
 
 				query.Source = []string{"USER_NAME", "QUEUE_NAME"}
 				result, err = client.Search(index, query)
@@ -271,10 +271,10 @@ func doClientTests(t *testing.T, config Config, index string, expectedNumHits in
 				So(result.HitSet.Hits[0].Details.UserName, ShouldNotBeBlank)
 				So(result.HitSet.Hits[0].Details.QueueName, ShouldNotBeBlank)
 
-				j, err = json.Marshal(result.HitSet.Hits[0].Details)
+				jsonBytes, err = json.Marshal(result.HitSet.Hits[0].Details)
 				So(err, ShouldBeNil)
-				So(string(j), ShouldNotContainSubstring, "ACCOUNTING_NAME")
-				So(string(j), ShouldContainSubstring, "USER_NAME")
+				So(string(jsonBytes), ShouldNotContainSubstring, "ACCOUNTING_NAME")
+				So(string(jsonBytes), ShouldContainSubstring, "USER_NAME")
 			})
 		})
 

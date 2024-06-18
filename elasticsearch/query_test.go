@@ -40,38 +40,38 @@ func TestQuery(t *testing.T) {
 		req, err := http.NewRequest(http.MethodGet, url, nil) //nolint:noctx
 		So(err, ShouldBeNil)
 
-		_, ok := NewQueryFromRequest(req)
-		So(ok, ShouldBeFalse)
+		_, madeQuery := NewQueryFromRequest(req)
+		So(madeQuery, ShouldBeFalse)
 
 		body := strings.NewReader(testAggQuery)
 
 		req, err = http.NewRequest(http.MethodPost, url, body) //nolint:noctx
 		So(err, ShouldBeNil)
 
-		_, ok = NewQueryFromRequest(req)
-		So(ok, ShouldBeFalse)
+		_, madeQuery = NewQueryFromRequest(req)
+		So(madeQuery, ShouldBeFalse)
 
 		url += "/_search"
 
 		req, err = http.NewRequest(http.MethodPost, url, nil) //nolint:noctx
 		So(err, ShouldBeNil)
 
-		_, ok = NewQueryFromRequest(req)
-		So(ok, ShouldBeFalse)
+		_, madeQuery = NewQueryFromRequest(req)
+		So(madeQuery, ShouldBeFalse)
 
 		req, err = http.NewRequest(http.MethodPost, url, body) //nolint:noctx
 		So(err, ShouldBeNil)
 
-		query, ok := NewQueryFromRequest(req)
-		So(ok, ShouldBeTrue)
+		query, madeQuery := NewQueryFromRequest(req)
+		So(madeQuery, ShouldBeTrue)
 		So(query.Aggs, ShouldNotBeNil)
 		So(query.IsScroll(), ShouldBeFalse)
 
 		req, err = http.NewRequest(http.MethodPost, url, strings.NewReader(testNonAggQuery)) //nolint:noctx
 		So(err, ShouldBeNil)
 
-		query, ok = NewQueryFromRequest(req)
-		So(ok, ShouldBeTrue)
+		query, madeQuery = NewQueryFromRequest(req)
+		So(madeQuery, ShouldBeTrue)
 		So(query.Aggs, ShouldBeNil)
 		So(query.IsScroll(), ShouldBeFalse)
 		So(query.Size, ShouldEqual, 0)
@@ -80,8 +80,8 @@ func TestQuery(t *testing.T) {
 		req, err = http.NewRequest(http.MethodPost, url, strings.NewReader(testNonAggQuery)) //nolint:noctx
 		So(err, ShouldBeNil)
 
-		query, ok = NewQueryFromRequest(req)
-		So(ok, ShouldBeTrue)
+		query, madeQuery = NewQueryFromRequest(req)
+		So(madeQuery, ShouldBeTrue)
 		So(query.IsScroll(), ShouldBeFalse)
 		So(query.Size, ShouldEqual, 10000)
 		So(len(query.Source), ShouldEqual, 0)
@@ -90,8 +90,8 @@ func TestQuery(t *testing.T) {
 		req, err = http.NewRequest(http.MethodPost, url, strings.NewReader(testNonAggQuery)) //nolint:noctx
 		So(err, ShouldBeNil)
 
-		query, ok = NewQueryFromRequest(req)
-		So(ok, ShouldBeTrue)
+		query, madeQuery = NewQueryFromRequest(req)
+		So(madeQuery, ShouldBeTrue)
 		So(query.IsScroll(), ShouldBeFalse)
 		So(query.Size, ShouldEqual, 10000)
 		So(query.Source, ShouldResemble, []string{"USER_NAME"})
@@ -100,8 +100,8 @@ func TestQuery(t *testing.T) {
 		req, err = http.NewRequest(http.MethodPost, url, strings.NewReader(testNonAggQuery)) //nolint:noctx
 		So(err, ShouldBeNil)
 
-		query, ok = NewQueryFromRequest(req)
-		So(ok, ShouldBeTrue)
+		query, madeQuery = NewQueryFromRequest(req)
+		So(madeQuery, ShouldBeTrue)
 		So(query.IsScroll(), ShouldBeFalse)
 		So(query.Size, ShouldEqual, 10000)
 		So(query.Source, ShouldResemble, []string{"USER_NAME", "QUEUE_NAME"})
@@ -110,8 +110,8 @@ func TestQuery(t *testing.T) {
 		req, err = http.NewRequest(http.MethodPost, url, strings.NewReader(testNonAggQuery)) //nolint:noctx
 		So(err, ShouldBeNil)
 
-		query, ok = NewQueryFromRequest(req)
-		So(ok, ShouldBeTrue)
+		query, madeQuery = NewQueryFromRequest(req)
+		So(madeQuery, ShouldBeTrue)
 		So(query.IsScroll(), ShouldBeTrue)
 	})
 }
