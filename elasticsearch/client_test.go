@@ -40,7 +40,7 @@ import (
 )
 
 const (
-	testAggQuery         = `{"aggs":{"stats":{"multi_terms":{"terms":[{"field":"ACCOUNTING_NAME"},{"field":"NUM_EXEC_PROCS"},{"field":"Job"}],"size":1000},"aggs":{"cpu_avail_sec":{"sum":{"field":"AVAIL_CPU_TIME_SEC"}},"cpu_wasted_sec":{"sum":{"field":"WASTED_CPU_SECONDS"}}}}},"size":0,"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-05-04T00:10:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}}]}}}`
+	testAggQuery         = `{"aggs":{"stats":{"multi_terms":{"terms":[{"field":"ACCOUNTING_NAME"},{"field":"NUM_EXEC_PROCS"},{"field":"Job"}],"size":1000},"aggs":{"cpu_avail_sec":{"sum":{"field":"AVAIL_CPU_TIME_SEC"}},"cpu_wasted_sec":{"sum":{"field":"WASTED_CPU_SECONDS"}}}}},"size":0,"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-05-04T00:10:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}}]}}}` //nolint:lll
 	testAggQueryResponse = `{
 		"hits": {
 			"total":{"value":2}
@@ -59,7 +59,7 @@ const (
 		}
 	}`
 
-	testNonAggQuery                 = `{"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-05-04T00:10:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}}]}}}`
+	testNonAggQuery                 = `{"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-05-04T00:10:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}}]}}}` //nolint:lll
 	testNonAggQueryResponseZeroSize = `{
 		"hits": {
 			"total":{"value":2},
@@ -88,21 +88,21 @@ const (
 		"aggregations": {}
 	}`
 
-	testScollQueryManyHits = `{"size":10000,"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-05-04T00:00:00Z","gte":"2024-05-03T15:00:00Z","format":"strict_date_optional_time"}}}]}}}`
+	testScollQueryManyHits = `{"size":10000,"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-05-04T00:00:00Z","gte":"2024-05-03T15:00:00Z","format":"strict_date_optional_time"}}}]}}}` //nolint:lll
 	testScrollManyHitsNum  = 23581
 
 	mockVersionJSON     = `{"version":{"number":"7.17.6"}}`
 	testExpectedVersion = "7.17.6"
 )
 
-var scrollHitsReturned = 0
+var scrollHitsReturned = 0 //nolint:gochecknoglobals
 
 type mockTransport struct{}
 
 func (m mockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	jsonStr := mockVersionJSON
 
-	if req.Body != nil {
+	if req.Body != nil { //nolint:nestif
 		scrollParam := req.URL.Query().Get("scroll")
 		scrollRequest := filepath.Base(req.URL.Path) == "scroll"
 		query := &Query{}
@@ -111,7 +111,7 @@ func (m mockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			return nil, err
 		}
 
-		if scrollRequest {
+		if scrollRequest { //nolint:gocritic
 			jsonStr = m.scrollHits()
 		} else if query.Aggs != nil {
 			jsonStr = testAggQueryResponse
@@ -125,8 +125,13 @@ func (m mockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 					if query.Query != nil && len(query.Query.Bool.Filter) > 1 {
 						frange, found := query.Query.Bool.Filter[1]["range"]
 						if found {
-							timeStampFilter := frange["timestamp"].(map[string]interface{})
-							gte = timeStampFilter["gte"].(string)
+							timeStampFilter, ok := frange["timestamp"].(map[string]interface{})
+							if ok {
+								gteStr, ok := timeStampFilter["gte"].(string)
+								if ok {
+									gte = gteStr
+								}
+							}
 						}
 					}
 
@@ -248,9 +253,9 @@ func doClientTests(t *testing.T, config Config, index string, expectedNumHits in
 				So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 0)
 				So(len(result.HitSet.Hits), ShouldEqual, expectedNumHits)
 				So(result.HitSet.Total.Value, ShouldEqual, expectedNumHits)
-				So(result.HitSet.Hits[0].Details.ACCOUNTING_NAME, ShouldEqual, "pathdev")
-				So(result.HitSet.Hits[0].Details.USER_NAME, ShouldEqual, "pathpipe")
-				So(result.HitSet.Hits[0].Details.QUEUE_NAME, ShouldEqual, "transfer")
+				So(result.HitSet.Hits[0].Details.AccountingName, ShouldEqual, "pathdev")
+				So(result.HitSet.Hits[0].Details.UserName, ShouldEqual, "pathpipe")
+				So(result.HitSet.Hits[0].Details.QueueName, ShouldEqual, "transfer")
 
 				j, err := json.Marshal(result.HitSet.Hits[0].Details)
 				So(err, ShouldBeNil)
@@ -262,9 +267,9 @@ func doClientTests(t *testing.T, config Config, index string, expectedNumHits in
 				So(err, ShouldBeNil)
 				So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 0)
 				So(len(result.HitSet.Hits), ShouldEqual, expectedNumHits)
-				So(result.HitSet.Hits[0].Details.ACCOUNTING_NAME, ShouldBeBlank)
-				So(result.HitSet.Hits[0].Details.USER_NAME, ShouldNotBeBlank)
-				So(result.HitSet.Hits[0].Details.QUEUE_NAME, ShouldNotBeBlank)
+				So(result.HitSet.Hits[0].Details.AccountingName, ShouldBeBlank)
+				So(result.HitSet.Hits[0].Details.UserName, ShouldNotBeBlank)
+				So(result.HitSet.Hits[0].Details.QueueName, ShouldNotBeBlank)
 
 				j, err = json.Marshal(result.HitSet.Hits[0].Details)
 				So(err, ShouldBeNil)
@@ -301,12 +306,14 @@ func TestElasticSearchClientReal(t *testing.T) {
 
 	if host == "" || username == "" || password == "" || scheme == "" || portStr == "" || index == "" {
 		SkipConvey("Skipping real elasticsearch client tests without FARMER_TEST_* env vars set", t, func() {})
+
 		return
 	}
 
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
 		SkipConvey("Skipping real elasticsearch client tests since FARMER_TEST_PORT was not a number", t, func() {})
+
 		return
 	}
 

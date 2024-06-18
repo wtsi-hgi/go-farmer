@@ -75,12 +75,13 @@ type ElasticInfo struct {
 
 func (c *Client) Info() (*ElasticInfo, error) {
 	resp, err := c.client.Info()
+	if err != nil {
+		return nil, err
+	}
 
 	info := &ElasticInfo{}
 
-	if err := json.NewDecoder(resp.Body).Decode(info); err != nil {
-		return nil, err
-	}
+	err = json.NewDecoder(resp.Body).Decode(info)
 
 	return info, err
 }
@@ -123,14 +124,14 @@ func (c *Client) Scroll(index string, query *Query) (*Result, error) {
 		return nil, err
 	}
 
-	defer c.scroll_cleanup(result)
+	defer c.scrollCleanup(result)
 
-	err = c.scroll_until_all_hits_received(result)
+	err = c.scrollUntilAllHitsReceived(result)
 
 	return result, err
 }
 
-func (c *Client) scroll_cleanup(result *Result) {
+func (c *Client) scrollCleanup(result *Result) {
 	scrollIDBody, err := scrollIDBody(result.ScrollID)
 	if err != nil {
 		c.Error = err
@@ -153,7 +154,7 @@ func scrollIDBody(scrollID string) (*bytes.Buffer, error) {
 	return bytes.NewBuffer(scrollBytes), nil
 }
 
-func (c *Client) scroll_until_all_hits_received(result *Result) error {
+func (c *Client) scrollUntilAllHitsReceived(result *Result) error {
 	total := result.HitSet.Total.Value
 	if total <= MaxSize {
 		return nil

@@ -31,6 +31,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -91,6 +92,22 @@ type QFBool struct {
 
 type Filter []map[string]map[string]interface{}
 
+func NewQuery(raw io.Reader) (*Query, error) {
+	query := &Query{}
+	err := json.NewDecoder(raw).Decode(query)
+
+	return query, err
+}
+
+func (q *Query) AsBody() (*bytes.Reader, error) {
+	queryBytes, err := json.Marshal(q)
+	if err != nil {
+		return nil, err
+	}
+
+	return bytes.NewReader(queryBytes), nil
+}
+
 func NewQueryFromRequest(req *http.Request) (*Query, bool) {
 	if req.Method != http.MethodPost {
 		return nil, false
@@ -110,41 +127,29 @@ func NewQueryFromRequest(req *http.Request) (*Query, bool) {
 		return nil, false
 	}
 
-	sizeParam := req.URL.Query().Get("size")
-	if sizeParam != "" {
-		size, err := strconv.Atoi(sizeParam)
-		if err == nil {
-			query.Size = size
-		}
-	}
-
-	sourceParam := req.URL.Query().Get("_source")
-	if sourceParam != "" {
-		query.Source = strings.Split(sourceParam, ",")
-	}
-
-	scrollParam := req.URL.Query().Get("scroll")
-	if scrollParam != "" {
-		query.isScroll = true
-	}
+	query.handleRequestParams((req.URL.Query()))
 
 	return query, true
 }
 
-func NewQuery(raw io.Reader) (*Query, error) {
-	query := &Query{}
-	err := json.NewDecoder(raw).Decode(query)
-
-	return query, err
-}
-
-func (q *Query) AsBody() (*bytes.Reader, error) {
-	queryBytes, err := json.Marshal(q)
-	if err != nil {
-		return nil, err
+func (q *Query) handleRequestParams(parms url.Values) {
+	sizeParam := parms.Get("size")
+	if sizeParam != "" {
+		size, err := strconv.Atoi(sizeParam)
+		if err == nil {
+			q.Size = size
+		}
 	}
 
-	return bytes.NewReader(queryBytes), nil
+	sourceParam := parms.Get("_source")
+	if sourceParam != "" {
+		q.Source = strings.Split(sourceParam, ",")
+	}
+
+	scrollParam := parms.Get("scroll")
+	if scrollParam != "" {
+		q.isScroll = true
+	}
 }
 
 func (q *Query) IsScroll() bool {

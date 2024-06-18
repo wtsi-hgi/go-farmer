@@ -33,6 +33,21 @@ import (
 	"github.com/elastic/go-elasticsearch/v7/esapi"
 )
 
+type Error struct {
+	Msg   string
+	cause string
+}
+
+func (e Error) Error() string {
+	if e.cause != "" {
+		return fmt.Sprintf("%s: %s", e.Msg, e.cause)
+	}
+
+	return e.Msg
+}
+
+const ErrFailedQuery = "elasticsearch query failed"
+
 type Result struct {
 	ScrollID     string `json:"_scroll_id"`
 	Took         int
@@ -54,8 +69,8 @@ type Hit struct {
 }
 
 type Details struct {
-	ACCOUNTING_NAME    string `json:",omitempty"`
-	AVAIL_CPU_TIME_SEC int    `json:",omitempty"`
+	AccountingName  string `json:"ACCOUNTING_NAME,omitempty"`
+	AvailCPUTimeSec int    `json:"AVAIL_CPU_TIME_SEC,omitempty"`
 	// AVG_MEM_EFFICIENCY_PERCENT     float64
 	// AVRG_MEM_USAGE_MB              float64
 	// AVRG_MEM_USAGE_MB_SEC_COOKED   float64
@@ -71,33 +86,33 @@ type Details struct {
 	// JOB_ID          int
 	// JOB_ARRAY_INDEX int
 	// JOB_EXIT_STATUS                int
-	JOB_NAME string `json:",omitempty"`
-	Job      string `json:",omitempty"`
+	JobName string `json:"JOB_NAME,omitempty"`
+	Job     string `json:",omitempty"`
 	// Job_Efficiency_Percent         float64
 	// Job_Efficiency_Raw_Percent     float64
 	// MAX_MEM_EFFICIENCY_PERCENT     float64
 	// MAX_MEM_USAGE_MB               float64
 	// MAX_MEM_USAGE_MB_SEC_COOKED    float64
 	// MAX_MEM_USAGE_MB_SEC_RAW       float64
-	MEM_REQUESTED_MB     int `json:",omitempty"`
-	MEM_REQUESTED_MB_SEC int `json:",omitempty"`
-	NUM_EXEC_PROCS       int `json:",omitempty"`
+	MemRequestedMB    int `json:"MEM_REQUESTED_MB,omitempty"`
+	MemRequestedMBSec int `json:"MEM_REQUESTED_MB_SEC,omitempty"`
+	NumExecProcs      int `json:"NUM_EXEC_PROCS,omitempty"`
 	// NumberOfHosts                  int
 	// NumberOfUniqueHosts            int
-	PENDING_TIME_SEC int `json:",omitempty"`
+	PendingTimeSec int `json:"PENDING_TIME_SEC,omitempty"`
 	// PROJECT_NAME                   string
-	QUEUE_NAME string `json:",omitempty"`
+	QueueName string `json:"QUEUE_NAME,omitempty"`
 	// RAW_AVG_MEM_EFFICIENCY_PERCENT float64
 	// RAW_CPU_TIME_SEC               float64
 	// RAW_MAX_MEM_EFFICIENCY_PERCENT float64
 	// RAW_WASTED_CPU_SECONDS         float64
 	// RAW_WASTED_MB_SECONDS          float64
-	RUN_TIME_SEC int `json:",omitempty"`
+	RunTimeSec int `json:"RUN_TIME_SEC,omitempty"`
 	// SUBMIT_TIME  int
-	Timestamp          int64   `json:"timestamp,omitempty"`
-	USER_NAME          string  `json:",omitempty"`
-	WASTED_CPU_SECONDS float64 `json:",omitempty"`
-	WASTED_MB_SECONDS  float64 `json:",omitempty"`
+	Timestamp        int64   `json:"timestamp,omitempty"`
+	UserName         string  `json:"USER_NAME,omitempty"`
+	WastedCPUSeconds float64 `json:"WASTED_CPU_SECONDS,omitempty"`
+	WastedMBSeconds  float64 `json:"WASTED_MB_SECONDS,omitempty"`
 }
 
 type Aggregations struct {
@@ -119,7 +134,7 @@ type BucketValue struct {
 
 func parseResultResponse(resp *esapi.Response) (*Result, error) {
 	if resp.IsError() {
-		return nil, fmt.Errorf("elasticsearch query failed: %s", resp)
+		return nil, Error{Msg: ErrFailedQuery, cause: resp.String()}
 	}
 
 	defer resp.Body.Close()
