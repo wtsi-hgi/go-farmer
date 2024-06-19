@@ -87,7 +87,7 @@ func (c *Client) Info() (*ElasticInfo, error) {
 }
 
 func (c *Client) Search(index string, query *Query) (*Result, error) {
-	qbody, err := query.AsBody()
+	qbody, err := query.asBody()
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +104,7 @@ func (c *Client) Search(index string, query *Query) (*Result, error) {
 }
 
 func (c *Client) Scroll(index string, query *Query) (*Result, error) {
-	qbody, err := query.AsBody()
+	qbody, err := query.asBody()
 	if err != nil {
 		return nil, err
 	}

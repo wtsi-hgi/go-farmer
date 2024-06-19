@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,20 +16,15 @@ import (
 	"sync"
 	"time"
 
-	bstd "github.com/deneonet/benc"
 	"github.com/deneonet/benc/bpre"
-	"github.com/deneonet/benc/bunsafe"
-	"github.com/dgryski/go-farm"
-	es "github.com/elastic/go-elasticsearch/v7"
-	"github.com/elastic/go-elasticsearch/v7/esapi"
 	lru "github.com/hashicorp/golang-lru/v2"
+	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
 	"gopkg.in/yaml.v3"
 )
 
 const (
 	index             = "user-data-ssg-isg-lsf-analytics-*"
 	maxSize           = 10000
-	scrollTime        = 1 * time.Minute
 	cacheSize         = 128
 	bucketName        = "hits"
 	dateFormat        = "2006/01/02"
@@ -47,85 +41,11 @@ const (
 	lengthEncodeLength     = 4
 	detailsBufferLength    = 16 * 1024
 
-	testPeriod = 0 // 1 is 10 mins, 2 is 3 days, otherwise over a month
+	testPeriod = 1 // 1 is 10 mins, 2 is 3 days, otherwise over a month
 	debug      = false
 )
 
-type Query struct {
-	Size  int          `json:"size"`
-	Aggs  *Aggs        `json:"aggs,omitempty"`
-	Query *QueryFilter `json:"query,omitempty"`
-	Sort  []string     `json:"sort,omitempty"`
-}
-
-type Aggs struct {
-	Stats AggsStats `json:"stats"`
-}
-
-type AggsStats struct {
-	MultiTerms MultiTerms           `json:"multi_terms"`
-	Aggs       map[string]AggsField `json:"aggs"`
-}
-
-type MultiTerms struct {
-	Terms []Field `json:"terms"`
-	Size  int     `json:"size"`
-}
-
-type Field struct {
-	Field string `json:"field"`
-}
-
-type AggsField struct {
-	Sum            *Field          `json:"sum,omitempty"`
-	ScriptedMetric *ScriptedMetric `json:"scripted_metric,omitempty"`
-}
-
-type ScriptedMetric struct {
-	InitScript    string      `json:"init_script"`
-	MapScript     string      `json:"map_script"`
-	CombineScript string      `json:"combine_script"`
-	ReduceScript  string      `json:"reduce_script"`
-	Params        interface{} `json:"params"`
-}
-
-type QueryFilter struct {
-	Bool QFBool `json:"bool"`
-}
-
-type QFBool struct {
-	Filter Filter `json:"filter"`
-}
-
-type Filter []map[string]map[string]interface{}
-
-func (q *Query) AsBody() (*bytes.Reader, error) {
-	queryBytes, err := q.toJSON()
-	if err != nil {
-		return nil, err
-	}
-
-	// fmt.Printf("query: %s\n", string(queryBytes))
-
-	return bytes.NewReader(queryBytes), nil
-}
-
-func (q *Query) toJSON() ([]byte, error) {
-	return json.Marshal(q)
-}
-
-func (q *Query) CacheKey() (string, error) {
-	queryBytes, err := q.toJSON()
-	if err != nil {
-		return "", err
-	}
-
-	l, h := farm.Hash128(queryBytes)
-
-	return fmt.Sprintf("%016x%016x", l, h), nil
-}
-
-type Config struct {
+type YAMLConfig struct {
 	Elastic struct {
 		Host     string
 		Username string
@@ -135,240 +55,13 @@ type Config struct {
 	}
 }
 
-type Result struct {
-	ScrollID     string `json:"_scroll_id"`
-	Took         int
-	TimedOut     bool    `json:"timed_out"`
-	HitSet       *HitSet `json:"hits"`
-	Aggregations Aggregations
-}
-
-type HitSet struct {
-	Total struct {
-		Value int
-	}
-	Hits []Hit
-	mu   sync.Mutex
-}
-
-func (h *HitSet) AddHit(id string, details *Details) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	h.Hits = append(h.Hits, Hit{
-		ID:      id,
-		Details: details,
-	})
-}
-
-type Hit struct {
-	ID      string   `json:"_id"`
-	Details *Details `json:"_source"`
-}
-
-type Details struct {
-	ACCOUNTING_NAME    string
-	AVAIL_CPU_TIME_SEC int
-	// AVG_MEM_EFFICIENCY_PERCENT     float64
-	// AVRG_MEM_USAGE_MB              float64
-	// AVRG_MEM_USAGE_MB_SEC_COOKED   float64
-	// AVRG_MEM_USAGE_MB_SEC_RAW      float64
-	BOM string
-	// CLUSTER_NAME                   string
-	// COOKED_CPU_TIME_SEC            float64
-	Command string
-	// END_TIME                       int
-	// EXEC_HOSTNAME                  []string
-	// Exit_Info                      int
-	// Exitreason                     string
-	// JOB_ID          int
-	// JOB_ARRAY_INDEX int
-	// JOB_EXIT_STATUS                int
-	JOB_NAME string
-	Job      string
-	// Job_Efficiency_Percent         float64
-	// Job_Efficiency_Raw_Percent     float64
-	// MAX_MEM_EFFICIENCY_PERCENT     float64
-	// MAX_MEM_USAGE_MB               float64
-	// MAX_MEM_USAGE_MB_SEC_COOKED    float64
-	// MAX_MEM_USAGE_MB_SEC_RAW       float64
-	MEM_REQUESTED_MB     int
-	MEM_REQUESTED_MB_SEC int
-	NUM_EXEC_PROCS       int
-	// NumberOfHosts                  int
-	// NumberOfUniqueHosts            int
-	PENDING_TIME_SEC int
-	// PROJECT_NAME                   string
-	QUEUE_NAME string
-	// RAW_AVG_MEM_EFFICIENCY_PERCENT float64
-	// RAW_CPU_TIME_SEC               float64
-	// RAW_MAX_MEM_EFFICIENCY_PERCENT float64
-	// RAW_WASTED_CPU_SECONDS         float64
-	// RAW_WASTED_MB_SECONDS          float64
-	RUN_TIME_SEC int
-	// SUBMIT_TIME  int
-	Timestamp          int64 `json:"timestamp"`
-	USER_NAME          string
-	WASTED_CPU_SECONDS float64
-	WASTED_MB_SECONDS  float64
-}
-
-func (d *Details) serialize() ([]byte, error) {
-	n := bstd.SizeString(d.ACCOUNTING_NAME)
-	n += bstd.SizeInt()
-	n += bstd.SizeString(d.BOM)
-	n += bstd.SizeString(d.Command)
-	n += bstd.SizeString(d.JOB_NAME)
-	n += bstd.SizeString(d.Job)
-	n += bstd.SizeInt()
-	n += bstd.SizeInt()
-	n += bstd.SizeInt()
-	n += bstd.SizeInt()
-	n += bstd.SizeString(d.QUEUE_NAME)
-	n += bstd.SizeInt()
-	n += bstd.SizeInt64()
-	n += bstd.SizeString(d.USER_NAME)
-	n += bstd.SizeFloat64()
-	n += bstd.SizeFloat64()
-
-	bpre.Reset()
-
-	n, encoded := bstd.Marshal(n)
-	n = bstd.MarshalString(n, encoded, d.ACCOUNTING_NAME)
-	n = bstd.MarshalInt(n, encoded, d.AVAIL_CPU_TIME_SEC)
-	n = bstd.MarshalString(n, encoded, d.BOM)
-	n = bstd.MarshalString(n, encoded, d.Command)
-	n = bstd.MarshalString(n, encoded, d.JOB_NAME)
-	n = bstd.MarshalString(n, encoded, d.Job)
-	n = bstd.MarshalInt(n, encoded, d.MEM_REQUESTED_MB)
-	n = bstd.MarshalInt(n, encoded, d.MEM_REQUESTED_MB_SEC)
-	n = bstd.MarshalInt(n, encoded, d.NUM_EXEC_PROCS)
-	n = bstd.MarshalInt(n, encoded, d.PENDING_TIME_SEC)
-	n = bstd.MarshalString(n, encoded, d.QUEUE_NAME)
-	n = bstd.MarshalInt(n, encoded, d.RUN_TIME_SEC)
-	n = bstd.MarshalInt64(n, encoded, d.Timestamp)
-	n = bstd.MarshalString(n, encoded, d.USER_NAME)
-	n = bstd.MarshalFloat64(n, encoded, d.WASTED_CPU_SECONDS)
-	n = bstd.MarshalFloat64(n, encoded, d.WASTED_MB_SECONDS)
-
-	err := bstd.VerifyMarshal(n, encoded)
-
-	return encoded, err
-}
-
-func (d *Details) deserialize(buf []byte) error {
-	var (
-		n   int
-		err error
-	)
-
-	n, d.ACCOUNTING_NAME, err = bunsafe.UnmarshalString(0, buf)
-	if err != nil {
-		return err
-	}
-
-	n, d.AVAIL_CPU_TIME_SEC, err = bstd.UnmarshalInt(n, buf)
-	if err != nil {
-		return err
-	}
-
-	n, d.BOM, err = bunsafe.UnmarshalString(n, buf)
-	if err != nil {
-		return err
-	}
-
-	n, d.Command, err = bunsafe.UnmarshalString(n, buf)
-	if err != nil {
-		return err
-	}
-
-	n, d.JOB_NAME, err = bstd.UnmarshalString(n, buf)
-	if err != nil {
-		return err
-	}
-
-	n, d.Job, err = bunsafe.UnmarshalString(n, buf)
-	if err != nil {
-		return err
-	}
-
-	n, d.MEM_REQUESTED_MB, err = bstd.UnmarshalInt(n, buf)
-	if err != nil {
-		return err
-	}
-
-	n, d.MEM_REQUESTED_MB_SEC, err = bstd.UnmarshalInt(n, buf)
-	if err != nil {
-		return err
-	}
-
-	n, d.NUM_EXEC_PROCS, err = bstd.UnmarshalInt(n, buf)
-	if err != nil {
-		return err
-	}
-
-	n, d.PENDING_TIME_SEC, err = bstd.UnmarshalInt(n, buf)
-	if err != nil {
-		return err
-	}
-
-	n, d.QUEUE_NAME, err = bunsafe.UnmarshalString(n, buf)
-	if err != nil {
-		return err
-	}
-
-	n, d.RUN_TIME_SEC, err = bstd.UnmarshalInt(n, buf)
-	if err != nil {
-		return err
-	}
-
-	n, d.Timestamp, err = bstd.UnmarshalInt64(n, buf)
-	if err != nil {
-		return err
-	}
-
-	n, d.USER_NAME, err = bunsafe.UnmarshalString(n, buf)
-	if err != nil {
-		return err
-	}
-
-	n, d.WASTED_CPU_SECONDS, err = bstd.UnmarshalFloat64(n, buf)
-	if err != nil {
-		return err
-	}
-
-	n, d.WASTED_MB_SECONDS, err = bstd.UnmarshalFloat64(n, buf)
-	if err != nil {
-		return err
-	}
-
-	return bstd.VerifyUnmarshal(n, buf)
-}
-
-type Aggregations struct {
-	Stats struct {
-		Buckets []struct {
-			Key          string      `json:"key_as_string"`
-			CPUAvailSec  BucketValue `json:"cpu_avail_sec"`
-			MemAvailSec  BucketValue `json:"mem_avail_mb_sec"`
-			CPUWastedSec BucketValue `json:"cpu_wasted_sec"`
-			MemWastedSec BucketValue `json:"mem_wasted_mb_sec"`
-			WastedCost   BucketValue `json:"wasted_cost"`
-		}
-	}
-}
-
-type BucketValue struct {
-	Value float64
-}
-
 func main() {
 	data, err := os.ReadFile(os.Args[1])
 	if err != nil {
 		log.Fatalf("error: %v", err)
 	}
 
-	c := Config{}
+	c := YAMLConfig{}
 
 	err = yaml.Unmarshal([]byte(data), &c)
 	if err != nil {
@@ -376,9 +69,9 @@ func main() {
 	}
 
 	cfg := es.Config{
-		Addresses: []string{
-			fmt.Sprintf("%s://%s:%d", c.Elastic.Scheme, c.Elastic.Host, c.Elastic.Port),
-		},
+		Host:     c.Elastic.Host,
+		Port:     c.Elastic.Port,
+		Scheme:   c.Elastic.Scheme,
 		Username: c.Elastic.Username,
 		Password: c.Elastic.Password,
 	}
@@ -388,7 +81,7 @@ func main() {
 		log.Fatalf("%s\n", err)
 	}
 
-	l, err := lru.New[string, *Result](cacheSize)
+	l, err := lru.New[string, *es.Result](cacheSize)
 	if err != nil {
 		log.Fatalf("%s\n", err)
 	}
@@ -412,32 +105,32 @@ func main() {
 
 	t := time.Now()
 
-	bomQuery := &Query{
-		Aggs: &Aggs{
-			Stats: AggsStats{
-				MultiTerms: MultiTerms{
-					Terms: []Field{
+	bomQuery := &es.Query{
+		Aggs: &es.Aggs{
+			Stats: es.AggsStats{
+				MultiTerms: es.MultiTerms{
+					Terms: []es.Field{
 						{Field: "ACCOUNTING_NAME"},
 						{Field: "NUM_EXEC_PROCS"},
 						{Field: "Job"},
 					},
 					Size: 1000,
 				},
-				Aggs: map[string]AggsField{
+				Aggs: map[string]es.AggsField{
 					"cpu_avail_sec": {
-						Sum: &Field{Field: "AVAIL_CPU_TIME_SEC"},
+						Sum: &es.Field{Field: "AVAIL_CPU_TIME_SEC"},
 					},
 					"cpu_wasted_sec": {
-						Sum: &Field{Field: "WASTED_CPU_SECONDS"},
+						Sum: &es.Field{Field: "WASTED_CPU_SECONDS"},
 					},
 					"mem_avail_mb_sec": {
-						Sum: &Field{Field: "MEM_REQUESTED_MB_SEC"},
+						Sum: &es.Field{Field: "MEM_REQUESTED_MB_SEC"},
 					},
 					"mem_wasted_mb_sec": {
-						Sum: &Field{Field: "WASTED_MB_SECONDS"},
+						Sum: &es.Field{Field: "WASTED_MB_SECONDS"},
 					},
 					"wasted_cost": {
-						ScriptedMetric: &ScriptedMetric{
+						ScriptedMetric: &es.ScriptedMetric{
 							InitScript:    "state.costs = []",
 							MapScript:     "double cpu_cost = doc.WASTED_CPU_SECONDS.value * params.cpu_second; double mem_cost = doc.WASTED_MB_SECONDS.value * params.mb_second; state.costs.add(Math.max(cpu_cost, mem_cost))",
 							CombineScript: "double total = 0; for (t in state.costs) { total += t } return total",
@@ -451,9 +144,9 @@ func main() {
 				},
 			},
 		},
-		Query: &QueryFilter{
-			Bool: QFBool{
-				Filter: Filter{
+		Query: &es.QueryFilter{
+			Bool: es.QFBool{
+				Filter: es.Filter{
 					{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
 					{"range": map[string]interface{}{
 						"timestamp": map[string]string{
@@ -493,7 +186,7 @@ func main() {
 		gte = "2024-06-03T00:00:00Z"
 	}
 
-	filter := Filter{
+	filter := es.Filter{
 		{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
 		{"range": map[string]interface{}{
 			"timestamp": map[string]string{
@@ -556,7 +249,7 @@ func main() {
 
 	if len(result.HitSet.Hits) > 0 {
 		fmt.Printf("num hits: %+v\n", len(result.HitSet.Hits))
-		fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0])
+		fmt.Printf("first hit: %+v\n", result.HitSet.Hits[0].Details)
 	}
 
 	if len(result.Aggregations.Stats.Buckets) > 0 {
@@ -576,7 +269,7 @@ func initDB(dbPath string, client *es.Client) error {
 		gte = "2024-06-02T00:00:00Z"
 	}
 
-	filter := Filter{
+	filter := es.Filter{
 		{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
 		{"range": map[string]interface{}{
 			"timestamp": map[string]string{
@@ -587,15 +280,15 @@ func initDB(dbPath string, client *es.Client) error {
 		}},
 	}
 
-	query := &Query{
+	query := &es.Query{
 		Size:  maxSize,
 		Sort:  []string{"timestamp", "_doc"},
-		Query: &QueryFilter{Bool: QFBool{Filter: filter}},
+		Query: &es.QueryFilter{Bool: es.QFBool{Filter: filter}},
 	}
 
 	t := time.Now()
 
-	result, err := searchWithScroll(client, query)
+	result, err := client.Scroll(index, query)
 	if err != nil {
 		return err
 	}
@@ -735,7 +428,7 @@ func (l *LocalDB) Close() error {
 	return nil
 }
 
-func storeInLocalDB(dbPath string, result *Result) (err error) {
+func storeInLocalDB(dbPath string, result *es.Result) (err error) {
 	fmt.Printf("storing %d hits\n", len(result.HitSet.Hits))
 
 	ldb, errl := NewLocalDB(dbPath)
@@ -753,20 +446,20 @@ func storeInLocalDB(dbPath string, result *Result) (err error) {
 	bpre.Marshal(detailsBufferLength)
 
 	for _, hit := range result.HitSet.Hits {
-		group, errf := fixedWidthGroup(hit.Details.ACCOUNTING_NAME)
+		group, errf := fixedWidthGroup(hit.Details.AccountingName)
 		if errf != nil {
 			err = errf
 			return
 		}
 
-		user, errf := fixedWidthUser(hit.Details.USER_NAME)
+		user, errf := fixedWidthUser(hit.Details.UserName)
 		if errf != nil {
 			err = errf
 			return
 		}
 
 		isGPU := notInGPUQueue
-		if strings.HasPrefix(hit.Details.QUEUE_NAME, "gpu") {
+		if strings.HasPrefix(hit.Details.QueueName, "gpu") {
 			isGPU = inGPUQueue
 		}
 
@@ -776,7 +469,7 @@ func storeInLocalDB(dbPath string, result *Result) (err error) {
 			return
 		}
 
-		encoded, errs := hit.Details.serialize()
+		encoded, errs := hit.Details.Serialize()
 		if errs != nil {
 			err = errs
 			return
@@ -834,31 +527,15 @@ func btoi(b []byte) int {
 	return int(binary.BigEndian.Uint32(b[0:4]))
 }
 
-func Search(l *lru.Cache[string, *Result], client *es.Client, index string, query *Query) (*Result, error) {
-	cacheKey, err := query.CacheKey()
-	if err != nil {
-		return nil, err
-	}
+func Search(l *lru.Cache[string, *es.Result], client *es.Client, index string, query *es.Query) (*es.Result, error) {
+	cacheKey := query.Key()
 
 	result, ok := l.Get(cacheKey)
 	if ok {
 		return result, nil
 	}
 
-	qbody, err := query.AsBody()
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := client.Search(
-		client.Search.WithIndex(index),
-		client.Search.WithBody(qbody),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	result, err = parseResponse(resp)
+	result, err := client.Search(index, query)
 	if err != nil {
 		return nil, err
 	}
@@ -868,48 +545,21 @@ func Search(l *lru.Cache[string, *Result], client *es.Client, index string, quer
 	return result, nil
 }
 
-func parseResponse(resp *esapi.Response) (*Result, error) {
-	if resp.IsError() {
-		return nil, fmt.Errorf("elasticsearch query failed: %s", resp)
-	}
-
-	defer resp.Body.Close()
-
-	// bodyBytes, _ := io.ReadAll(resp.Body)
-	// fmt.Println(string(bodyBytes))
-	// os.Exit(0)
-
-	var result Result
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-
-	// fmt.Printf("total: %d; hits: %d; aggs: %d\n",
-	// 	result.HitSet.Total.Value, len(result.HitSet.Hits), len(result.Aggregations.Stats.Buckets))
-	fmt.Printf(".")
-
-	return &result, nil
-}
-
-func Scroll(l *lru.Cache[string, *Result], dbPath string, client *es.Client, index string, filter Filter) (*Result, error) {
-	query := &Query{
+func Scroll(l *lru.Cache[string, *es.Result], dbPath string, client *es.Client, index string, filter es.Filter) (*es.Result, error) {
+	query := &es.Query{
 		Size:  maxSize,
 		Sort:  []string{"_doc"},
-		Query: &QueryFilter{Bool: QFBool{Filter: filter}},
+		Query: &es.QueryFilter{Bool: es.QFBool{Filter: filter}},
 	}
 
-	cacheKey, err := query.CacheKey()
-	if err != nil {
-		return nil, err
-	}
+	cacheKey := query.Key()
 
 	result, ok := l.Get(cacheKey)
 	if ok {
 		return result, nil
 	}
 
-	result, err = searchLocal(dbPath, query)
+	result, err := searchLocal(dbPath, query)
 	if err != nil {
 		return nil, err
 	}
@@ -932,7 +582,7 @@ type LocalFilter struct {
 	checkGPU        bool
 }
 
-func NewLocalFilter(query *Query) (*LocalFilter, error) {
+func NewLocalFilter(query *es.Query) (*LocalFilter, error) {
 	lte, gte, err := parseRange(query.Query.Bool.Filter)
 	if err != nil {
 		return nil, err
@@ -984,7 +634,7 @@ func (f *LocalFilter) PassesGPUCheck(val byte) bool {
 	return val == inGPUQueue
 }
 
-func searchLocal(dbPath string, query *Query) (*Result, error) {
+func searchLocal(dbPath string, query *es.Query) (*es.Result, error) {
 	dateBOMDirs := make(map[string][]string)
 
 	err := filepath.WalkDir(dbPath, func(path string, d fs.DirEntry, err error) error {
@@ -1008,8 +658,8 @@ func searchLocal(dbPath string, query *Query) (*Result, error) {
 	}
 
 	errCh := make(chan error)
-	result := &Result{
-		HitSet: &HitSet{},
+	result := &es.Result{
+		HitSet: &es.HitSet{},
 	}
 
 	errsDoneCh := make(chan struct{})
@@ -1051,7 +701,7 @@ func searchLocal(dbPath string, query *Query) (*Result, error) {
 	return result, nil
 }
 
-func searchLocalFile(dbFilePath string, filter *LocalFilter, hitset *HitSet, errCh chan error) {
+func searchLocalFile(dbFilePath string, filter *LocalFilter, hitset *es.HitSet, errCh chan error) {
 	f, err := os.Open(dbFilePath)
 	if err != nil {
 		errCh <- err
@@ -1147,9 +797,7 @@ func searchLocalFile(dbFilePath string, filter *LocalFilter, hitset *HitSet, err
 		}
 
 		if passesFilter {
-			d := &Details{}
-
-			err = d.deserialize(buf)
+			d, err := es.DeserializeDetails(buf)
 			if err != nil {
 				errCh <- err
 
@@ -1167,7 +815,7 @@ func searchLocalFile(dbFilePath string, filter *LocalFilter, hitset *HitSet, err
 	f.Close()
 }
 
-func parseRange(filter Filter) (lte time.Time, gte time.Time, err error) {
+func parseRange(filter es.Filter) (lte time.Time, gte time.Time, err error) {
 	for _, val := range filter {
 		fRange, ok := val["range"]
 		if !ok {
@@ -1202,7 +850,7 @@ func parseRange(filter Filter) (lte time.Time, gte time.Time, err error) {
 	return
 }
 
-func queryToBomStr(query *Query) (string, error) {
+func queryToBomStr(query *es.Query) (string, error) {
 	for _, val := range query.Query.Bool.Filter {
 		mp, ok := val["match_phrase"]
 		if !ok {
@@ -1234,7 +882,7 @@ func stringFromFilterValue(fv map[string]interface{}, key string) string {
 	return keyString
 }
 
-func queryToFilters(query *Query) (accountingName, userName []byte, checkGPU bool) {
+func queryToFilters(query *es.Query) (accountingName, userName []byte, checkGPU bool) {
 	for _, val := range query.Query.Bool.Filter {
 		mp, ok := val["match_phrase"]
 		if !ok {
@@ -1271,87 +919,4 @@ func queryToFilters(query *Query) (accountingName, userName []byte, checkGPU boo
 	}
 
 	return
-}
-
-func searchWithScroll(client *es.Client, query *Query) (*Result, error) {
-	qbody, err := query.AsBody()
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := client.Search(
-		client.Search.WithIndex(index),
-		client.Search.WithBody(qbody),
-		client.Search.WithSize(maxSize),
-		client.Search.WithScroll(scrollTime),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	result, err := parseResponse(resp)
-	if err != nil {
-		return nil, err
-	}
-
-	defer func() {
-		scrollIDBody, err := scrollIDBody(result.ScrollID)
-		if err != nil {
-			log.Fatalf("scrollIDBody failed: %s\n", err)
-			return
-		}
-
-		_, err = client.ClearScroll(client.ClearScroll.WithBody(scrollIDBody))
-		if err != nil {
-			log.Fatalf("clearscroll failed: %s\n", err)
-		}
-	}()
-
-	total := result.HitSet.Total.Value
-	if total <= maxSize {
-		return result, nil
-	}
-
-	for keepScrolling := true; keepScrolling; keepScrolling = len(result.HitSet.Hits) < total {
-		err = scroll(client, result)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return result, nil
-}
-
-func scrollIDBody(scrollID string) (*bytes.Buffer, error) {
-	scrollBytes, err := json.Marshal(&map[string]string{"scroll_id": scrollID})
-	if err != nil {
-		return nil, err
-	}
-
-	return bytes.NewBuffer(scrollBytes), nil
-}
-
-func scroll(client *es.Client, result *Result) error {
-	scrollIDBody, err := scrollIDBody(result.ScrollID)
-	if err != nil {
-		return err
-	}
-
-	resp, err := client.Scroll(
-		client.Scroll.WithBody(scrollIDBody),
-		client.Scroll.WithScroll(scrollTime),
-	)
-	if err != nil {
-		return err
-	}
-
-	scrollResult, err := parseResponse(resp)
-	if err != nil {
-		return err
-	}
-
-	result.HitSet.Hits = append(result.HitSet.Hits, scrollResult.HitSet.Hits...)
-	result.ScrollID = scrollResult.ScrollID
-
-	return nil
 }

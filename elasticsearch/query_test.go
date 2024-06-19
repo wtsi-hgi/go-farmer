@@ -34,7 +34,7 @@ import (
 )
 
 func TestQuery(t *testing.T) {
-	Convey("You can make a Query from different kinds of requests", t, func() {
+	Convey("You can make a Query from different kinds of requests, and they have unique keys", t, func() {
 		url := "http://host:1234"
 
 		req, err := http.NewRequest(http.MethodGet, url, nil) //nolint:noctx
@@ -64,6 +64,9 @@ func TestQuery(t *testing.T) {
 
 		query, madeQuery := NewQueryFromRequest(req)
 		So(madeQuery, ShouldBeTrue)
+
+		key1 := query.Key()
+		So(key1, ShouldNotBeBlank)
 		So(query.Aggs, ShouldNotBeNil)
 		So(query.IsScroll(), ShouldBeFalse)
 
@@ -72,6 +75,10 @@ func TestQuery(t *testing.T) {
 
 		query, madeQuery = NewQueryFromRequest(req)
 		So(madeQuery, ShouldBeTrue)
+
+		key2 := query.Key()
+		So(key2, ShouldNotBeBlank)
+		So(key2, ShouldNotEqual, key1)
 		So(query.Aggs, ShouldBeNil)
 		So(query.IsScroll(), ShouldBeFalse)
 		So(query.Size, ShouldEqual, 0)
@@ -82,6 +89,10 @@ func TestQuery(t *testing.T) {
 
 		query, madeQuery = NewQueryFromRequest(req)
 		So(madeQuery, ShouldBeTrue)
+
+		key3 := query.Key()
+		So(key3, ShouldNotBeBlank)
+		So(key3, ShouldNotEqual, key2)
 		So(query.IsScroll(), ShouldBeFalse)
 		So(query.Size, ShouldEqual, 10000)
 		So(len(query.Source), ShouldEqual, 0)
@@ -92,6 +103,10 @@ func TestQuery(t *testing.T) {
 
 		query, madeQuery = NewQueryFromRequest(req)
 		So(madeQuery, ShouldBeTrue)
+
+		key4 := query.Key()
+		So(key4, ShouldNotBeBlank)
+		So(key4, ShouldNotEqual, key3)
 		So(query.IsScroll(), ShouldBeFalse)
 		So(query.Size, ShouldEqual, 10000)
 		So(query.Source, ShouldResemble, []string{"USER_NAME"})
@@ -102,6 +117,10 @@ func TestQuery(t *testing.T) {
 
 		query, madeQuery = NewQueryFromRequest(req)
 		So(madeQuery, ShouldBeTrue)
+
+		key5 := query.Key()
+		So(key5, ShouldNotBeBlank)
+		So(key5, ShouldNotEqual, key4)
 		So(query.IsScroll(), ShouldBeFalse)
 		So(query.Size, ShouldEqual, 10000)
 		So(query.Source, ShouldResemble, []string{"USER_NAME", "QUEUE_NAME"})
@@ -112,6 +131,10 @@ func TestQuery(t *testing.T) {
 
 		query, madeQuery = NewQueryFromRequest(req)
 		So(madeQuery, ShouldBeTrue)
+
+		key6 := query.Key()
+		So(key6, ShouldNotBeBlank)
+		So(key6, ShouldEqual, key5)
 		So(query.IsScroll(), ShouldBeTrue)
 	})
 }

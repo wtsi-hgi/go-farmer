@@ -29,7 +29,11 @@ package elasticsearch
 import (
 	"encoding/json"
 	"fmt"
+	"sync"
 
+	bstd "github.com/deneonet/benc"
+	"github.com/deneonet/benc/bpre"
+	"github.com/deneonet/benc/bunsafe"
 	"github.com/elastic/go-elasticsearch/v7/esapi"
 )
 
@@ -61,6 +65,17 @@ type HitSet struct {
 		Value int
 	}
 	Hits []Hit
+	mu   sync.Mutex
+}
+
+func (h *HitSet) AddHit(id string, details *Details) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.Hits = append(h.Hits, Hit{
+		ID:      id,
+		Details: details,
+	})
 }
 
 type Hit struct {
@@ -113,6 +128,142 @@ type Details struct {
 	UserName         string  `json:"USER_NAME,omitempty"`
 	WastedCPUSeconds float64 `json:"WASTED_CPU_SECONDS,omitempty"`
 	WastedMBSeconds  float64 `json:"WASTED_MB_SECONDS,omitempty"`
+}
+
+func (d *Details) Serialize() ([]byte, error) { //nolint:funlen,misspell
+	n := bstd.SizeString(d.AccountingName) //nolint:varnamelen
+	n += bstd.SizeInt()
+	n += bstd.SizeString(d.BOM)
+	n += bstd.SizeString(d.Command)
+	n += bstd.SizeString(d.JobName)
+	n += bstd.SizeString(d.Job)
+	n += bstd.SizeInt()
+	n += bstd.SizeInt()
+	n += bstd.SizeInt()
+	n += bstd.SizeInt()
+	n += bstd.SizeString(d.QueueName)
+	n += bstd.SizeInt()
+	n += bstd.SizeInt64()
+	n += bstd.SizeString(d.UserName)
+	n += bstd.SizeFloat64()
+	n += bstd.SizeFloat64()
+
+	bpre.Reset()
+
+	n, encoded := bstd.Marshal(n)
+	n = bstd.MarshalString(n, encoded, d.AccountingName)
+	n = bstd.MarshalInt(n, encoded, d.AvailCPUTimeSec)
+	n = bstd.MarshalString(n, encoded, d.BOM)
+	n = bstd.MarshalString(n, encoded, d.Command)
+	n = bstd.MarshalString(n, encoded, d.JobName)
+	n = bstd.MarshalString(n, encoded, d.Job)
+	n = bstd.MarshalInt(n, encoded, d.MemRequestedMB)
+	n = bstd.MarshalInt(n, encoded, d.MemRequestedMBSec)
+	n = bstd.MarshalInt(n, encoded, d.NumExecProcs)
+	n = bstd.MarshalInt(n, encoded, d.PendingTimeSec)
+	n = bstd.MarshalString(n, encoded, d.QueueName)
+	n = bstd.MarshalInt(n, encoded, d.RunTimeSec)
+	n = bstd.MarshalInt64(n, encoded, d.Timestamp)
+	n = bstd.MarshalString(n, encoded, d.UserName)
+	n = bstd.MarshalFloat64(n, encoded, d.WastedCPUSeconds)
+	n = bstd.MarshalFloat64(n, encoded, d.WastedMBSeconds)
+
+	err := bstd.VerifyMarshal(n, encoded)
+
+	return encoded, err
+}
+
+func DeserializeDetails(encoded []byte) (*Details, error) { //nolint:funlen,gocognit,gocyclo,cyclop
+	details := &Details{}
+
+	var (
+		n   int //nolint:varnamelen
+		err error
+	)
+
+	n, details.AccountingName, err = bunsafe.UnmarshalString(0, encoded)
+	if err != nil {
+		return nil, err
+	}
+
+	n, details.AvailCPUTimeSec, err = bstd.UnmarshalInt(n, encoded)
+	if err != nil {
+		return nil, err
+	}
+
+	n, details.BOM, err = bunsafe.UnmarshalString(n, encoded)
+	if err != nil {
+		return nil, err
+	}
+
+	n, details.Command, err = bunsafe.UnmarshalString(n, encoded)
+	if err != nil {
+		return nil, err
+	}
+
+	n, details.JobName, err = bstd.UnmarshalString(n, encoded)
+	if err != nil {
+		return nil, err
+	}
+
+	n, details.Job, err = bunsafe.UnmarshalString(n, encoded)
+	if err != nil {
+		return nil, err
+	}
+
+	n, details.MemRequestedMB, err = bstd.UnmarshalInt(n, encoded)
+	if err != nil {
+		return nil, err
+	}
+
+	n, details.MemRequestedMBSec, err = bstd.UnmarshalInt(n, encoded)
+	if err != nil {
+		return nil, err
+	}
+
+	n, details.NumExecProcs, err = bstd.UnmarshalInt(n, encoded)
+	if err != nil {
+		return nil, err
+	}
+
+	n, details.PendingTimeSec, err = bstd.UnmarshalInt(n, encoded)
+	if err != nil {
+		return nil, err
+	}
+
+	n, details.QueueName, err = bunsafe.UnmarshalString(n, encoded)
+	if err != nil {
+		return nil, err
+	}
+
+	n, details.RunTimeSec, err = bstd.UnmarshalInt(n, encoded)
+	if err != nil {
+		return nil, err
+	}
+
+	n, details.Timestamp, err = bstd.UnmarshalInt64(n, encoded)
+	if err != nil {
+		return nil, err
+	}
+
+	n, details.UserName, err = bunsafe.UnmarshalString(n, encoded)
+	if err != nil {
+		return nil, err
+	}
+
+	n, details.WastedCPUSeconds, err = bstd.UnmarshalFloat64(n, encoded)
+	if err != nil {
+		return nil, err
+	}
+
+	n, details.WastedMBSeconds, err = bstd.UnmarshalFloat64(n, encoded)
+	if err != nil {
+		return nil, err
+	}
+
+	err = bstd.VerifyUnmarshal(n, encoded)
+
+	return details, err
 }
 
 type Aggregations struct {

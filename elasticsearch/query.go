@@ -29,12 +29,15 @@ package elasticsearch
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/dgryski/go-farm"
 )
 
 const (
@@ -99,13 +102,20 @@ func NewQuery(raw io.Reader) (*Query, error) {
 	return query, err
 }
 
-func (q *Query) AsBody() (*bytes.Reader, error) {
+func (q *Query) asBody() (*bytes.Reader, error) {
 	queryBytes, err := json.Marshal(q)
 	if err != nil {
 		return nil, err
 	}
 
 	return bytes.NewReader(queryBytes), nil
+}
+
+func (q *Query) Key() string {
+	queryBytes, _ := json.Marshal(q) //nolint:errcheck,errchkjson
+	l, h := farm.Hash128(queryBytes)
+
+	return fmt.Sprintf("%016x%016x", l, h)
 }
 
 func NewQueryFromRequest(req *http.Request) (*Query, bool) {
