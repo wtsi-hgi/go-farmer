@@ -45,6 +45,7 @@ const (
 	searchPage = "_search"
 )
 
+// Query describes the search query you wish to run against Elastic Search.
 type Query struct {
 	Size     int          `json:"size"`
 	Aggs     *Aggs        `json:"aggs,omitempty"`
@@ -54,6 +55,7 @@ type Query struct {
 	isScroll bool
 }
 
+// Aggs is used to specify an aggregation query.
 type Aggs struct {
 	Stats AggsStats `json:"stats"`
 }
@@ -85,6 +87,7 @@ type ScriptedMetric struct {
 	Params        interface{} `json:"params"`
 }
 
+// QueryFilter is used to filter the documents you're interested in.
 type QueryFilter struct {
 	Bool QFBool `json:"bool"`
 }
@@ -95,30 +98,10 @@ type QFBool struct {
 
 type Filter []map[string]map[string]interface{}
 
-func NewQuery(raw io.Reader) (*Query, error) {
-	query := &Query{}
-	err := json.NewDecoder(raw).Decode(query)
-
-	return query, err
-}
-
-func (q *Query) asBody() (*bytes.Reader, error) {
-	queryBytes, err := json.Marshal(q)
-	if err != nil {
-		return nil, err
-	}
-
-	return bytes.NewReader(queryBytes), nil
-}
-
-func (q *Query) Key() string {
-	queryBytes, _ := json.Marshal(q) //nolint:errcheck,errchkjson
-	l, h := farm.Hash128(queryBytes)
-
-	return fmt.Sprintf("%016x%016x", l, h)
-}
-
-func NewQueryFromRequest(req *http.Request) (*Query, bool) {
+// NewQuery looks at the given Request method, path, body and parameters to see
+// if it's a search request, and converts it to a Query if so. The booleon will
+// be false if not.
+func NewQuery(req *http.Request) (*Query, bool) {
 	if req.Method != http.MethodPost {
 		return nil, false
 	}
@@ -132,7 +115,7 @@ func NewQueryFromRequest(req *http.Request) (*Query, bool) {
 		return nil, false
 	}
 
-	query, err := NewQuery(req.Body)
+	query, err := newQueryFromReader(req.Body)
 	if err != nil {
 		return nil, false
 	}
@@ -140,6 +123,13 @@ func NewQueryFromRequest(req *http.Request) (*Query, bool) {
 	query.handleRequestParams((req.URL.Query()))
 
 	return query, true
+}
+
+func newQueryFromReader(raw io.Reader) (*Query, error) {
+	query := &Query{}
+	err := json.NewDecoder(raw).Decode(query)
+
+	return query, err
 }
 
 func (q *Query) handleRequestParams(parms url.Values) {
@@ -162,6 +152,25 @@ func (q *Query) handleRequestParams(parms url.Values) {
 	}
 }
 
+// IsScroll returns true if the http.Request this Query was made from had a
+// scroll parameter.
 func (q *Query) IsScroll() bool {
 	return q.isScroll
+}
+
+// Key returns a string that is unique to this Query.
+func (q *Query) Key() string {
+	queryBytes, _ := json.Marshal(q) //nolint:errcheck,errchkjson
+	l, h := farm.Hash128(queryBytes)
+
+	return fmt.Sprintf("%016x%016x", l, h)
+}
+
+func (q *Query) asBody() (*bytes.Reader, error) {
+	queryBytes, err := json.Marshal(q)
+	if err != nil {
+		return nil, err
+	}
+
+	return bytes.NewReader(queryBytes), nil
 }

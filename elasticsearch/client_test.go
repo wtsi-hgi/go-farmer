@@ -208,7 +208,7 @@ func doClientTests(t *testing.T, config Config, index string, expectedNumHits in
 		Convey("And given an elasticsearch aggregation query json", func() {
 			jsonStr := testAggQuery
 			r := strings.NewReader(jsonStr)
-			query, err := NewQuery(r)
+			query, err := newQueryFromReader(r)
 			So(err, ShouldBeNil)
 
 			Convey("You can do a Search", func() {
@@ -224,7 +224,7 @@ func doClientTests(t *testing.T, config Config, index string, expectedNumHits in
 		Convey("And given an elasticsearch non-aggregation query json", func() {
 			jsonStr := testNonAggQuery
 			r := strings.NewReader(jsonStr)
-			query, err := NewQuery(r)
+			query, err := newQueryFromReader(r)
 			So(err, ShouldBeNil)
 
 			Convey("You can do a Search", func() {
@@ -281,7 +281,7 @@ func doClientTests(t *testing.T, config Config, index string, expectedNumHits in
 		Convey("And given an elasticsearch non-aggregation query json with more hits than max", func() {
 			jsonStr := testScollQueryManyHits
 			r := strings.NewReader(jsonStr)
-			query, err := NewQuery(r)
+			query, err := newQueryFromReader(r)
 			So(err, ShouldBeNil)
 
 			Convey("You can do a Scroll which auto-scrolls", func() {

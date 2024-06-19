@@ -37,11 +37,13 @@ import (
 	"github.com/elastic/go-elasticsearch/v7/esapi"
 )
 
+// Error is an error type that has a Msg with one of our const Err* messages.
 type Error struct {
 	Msg   string
 	cause string
 }
 
+// Error returns a string representation of the error.
 func (e Error) Error() string {
 	if e.cause != "" {
 		return fmt.Sprintf("%s: %s", e.Msg, e.cause)
@@ -52,6 +54,7 @@ func (e Error) Error() string {
 
 const ErrFailedQuery = "elasticsearch query failed"
 
+// Result holds the results of a search query.
 type Result struct {
 	ScrollID     string `json:"_scroll_id"`
 	Took         int
@@ -60,6 +63,8 @@ type Result struct {
 	Aggregations Aggregations
 }
 
+// HitSet is the container of all Hits, plus a Total.Value which may tell you
+// the total number of matching documents.
 type HitSet struct {
 	Total struct {
 		Value int
@@ -68,6 +73,7 @@ type HitSet struct {
 	mu   sync.Mutex
 }
 
+// AddHit can be used if constructing your own Hits manually. It is thread safe.
 func (h *HitSet) AddHit(id string, details *Details) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -83,6 +89,7 @@ type Hit struct {
 	Details *Details `json:"_source"`
 }
 
+// Details holds the document information of a Hit.
 type Details struct {
 	AccountingName  string `json:"ACCOUNTING_NAME,omitempty"`
 	AvailCPUTimeSec int    `json:"AVAIL_CPU_TIME_SEC,omitempty"`
@@ -130,6 +137,8 @@ type Details struct {
 	WastedMBSeconds  float64 `json:"WASTED_MB_SECONDS,omitempty"`
 }
 
+// Serialize converts a Details to a byte slice representation suitable for
+// storing on disk.
 func (d *Details) Serialize() ([]byte, error) { //nolint:funlen,misspell
 	n := bstd.SizeString(d.AccountingName) //nolint:varnamelen
 	n += bstd.SizeInt()
@@ -173,6 +182,8 @@ func (d *Details) Serialize() ([]byte, error) { //nolint:funlen,misspell
 	return encoded, err
 }
 
+// DeserializeDetails takes the output of Details.Serialize and converts it
+// back in to a Details.
 func DeserializeDetails(encoded []byte) (*Details, error) { //nolint:funlen,gocognit,gocyclo,cyclop
 	details := &Details{}
 

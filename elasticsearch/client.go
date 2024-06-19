@@ -38,6 +38,9 @@ import (
 
 const scrollTime = 1 * time.Minute
 
+// Config allows you to specify your Elastic Search server details. Currently
+// only basic auth is supported, for an internal network server with "public"
+// access.
 type Config struct {
 	Host      string
 	Username  string
@@ -47,11 +50,14 @@ type Config struct {
 	transport http.RoundTripper
 }
 
+// Client is used to interact with an Elastic Search server.
 type Client struct {
 	client *es.Client
 	Error  error
 }
 
+// NewClient returns a Client that can talk to the configured Elastic Search
+// server.
 func NewClient(config Config) (*Client, error) {
 	cfg := es.Config{
 		Addresses: []string{
@@ -67,12 +73,15 @@ func NewClient(config Config) (*Client, error) {
 	return &Client{client: client}, err
 }
 
+// ElasticInfo is the type returned by an Info() request. It just tells you the
+// version number of the server.
 type ElasticInfo struct {
 	Version struct {
 		Number string
 	}
 }
 
+// Info tells you the version number number info of the server.
 func (c *Client) Info() (*ElasticInfo, error) {
 	resp, err := c.client.Info()
 	if err != nil {
@@ -86,6 +95,9 @@ func (c *Client) Info() (*ElasticInfo, error) {
 	return info, err
 }
 
+// Search uses the given index and query to get back your desired search
+// results. If there are more than 10,000 hits, you won't get them (use Scroll
+// instead).
 func (c *Client) Search(index string, query *Query) (*Result, error) {
 	qbody, err := query.asBody()
 	if err != nil {
@@ -103,6 +115,8 @@ func (c *Client) Search(index string, query *Query) (*Result, error) {
 	return parseResultResponse(resp)
 }
 
+// Scroll uses the given index and query to get back your desired search
+// results. It auto-scrolls and returns all your hits in one go.
 func (c *Client) Scroll(index string, query *Query) (*Result, error) {
 	qbody, err := query.asBody()
 	if err != nil {

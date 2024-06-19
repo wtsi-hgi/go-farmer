@@ -40,7 +40,7 @@ func TestQuery(t *testing.T) {
 		req, err := http.NewRequest(http.MethodGet, url, nil) //nolint:noctx
 		So(err, ShouldBeNil)
 
-		_, madeQuery := NewQueryFromRequest(req)
+		_, madeQuery := NewQuery(req)
 		So(madeQuery, ShouldBeFalse)
 
 		body := strings.NewReader(testAggQuery)
@@ -48,7 +48,7 @@ func TestQuery(t *testing.T) {
 		req, err = http.NewRequest(http.MethodPost, url, body) //nolint:noctx
 		So(err, ShouldBeNil)
 
-		_, madeQuery = NewQueryFromRequest(req)
+		_, madeQuery = NewQuery(req)
 		So(madeQuery, ShouldBeFalse)
 
 		url += "/_search"
@@ -56,13 +56,13 @@ func TestQuery(t *testing.T) {
 		req, err = http.NewRequest(http.MethodPost, url, nil) //nolint:noctx
 		So(err, ShouldBeNil)
 
-		_, madeQuery = NewQueryFromRequest(req)
+		_, madeQuery = NewQuery(req)
 		So(madeQuery, ShouldBeFalse)
 
 		req, err = http.NewRequest(http.MethodPost, url, body) //nolint:noctx
 		So(err, ShouldBeNil)
 
-		query, madeQuery := NewQueryFromRequest(req)
+		query, madeQuery := NewQuery(req)
 		So(madeQuery, ShouldBeTrue)
 
 		key1 := query.Key()
@@ -73,7 +73,7 @@ func TestQuery(t *testing.T) {
 		req, err = http.NewRequest(http.MethodPost, url, strings.NewReader(testNonAggQuery)) //nolint:noctx
 		So(err, ShouldBeNil)
 
-		query, madeQuery = NewQueryFromRequest(req)
+		query, madeQuery = NewQuery(req)
 		So(madeQuery, ShouldBeTrue)
 
 		key2 := query.Key()
@@ -87,7 +87,7 @@ func TestQuery(t *testing.T) {
 		req, err = http.NewRequest(http.MethodPost, url, strings.NewReader(testNonAggQuery)) //nolint:noctx
 		So(err, ShouldBeNil)
 
-		query, madeQuery = NewQueryFromRequest(req)
+		query, madeQuery = NewQuery(req)
 		So(madeQuery, ShouldBeTrue)
 
 		key3 := query.Key()
@@ -101,7 +101,7 @@ func TestQuery(t *testing.T) {
 		req, err = http.NewRequest(http.MethodPost, url, strings.NewReader(testNonAggQuery)) //nolint:noctx
 		So(err, ShouldBeNil)
 
-		query, madeQuery = NewQueryFromRequest(req)
+		query, madeQuery = NewQuery(req)
 		So(madeQuery, ShouldBeTrue)
 
 		key4 := query.Key()
@@ -115,7 +115,7 @@ func TestQuery(t *testing.T) {
 		req, err = http.NewRequest(http.MethodPost, url, strings.NewReader(testNonAggQuery)) //nolint:noctx
 		So(err, ShouldBeNil)
 
-		query, madeQuery = NewQueryFromRequest(req)
+		query, madeQuery = NewQuery(req)
 		So(madeQuery, ShouldBeTrue)
 
 		key5 := query.Key()
@@ -129,7 +129,7 @@ func TestQuery(t *testing.T) {
 		req, err = http.NewRequest(http.MethodPost, url, strings.NewReader(testNonAggQuery)) //nolint:noctx
 		So(err, ShouldBeNil)
 
-		query, madeQuery = NewQueryFromRequest(req)
+		query, madeQuery = NewQuery(req)
 		So(madeQuery, ShouldBeTrue)
 
 		key6 := query.Key()
