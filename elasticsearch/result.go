@@ -66,11 +66,13 @@ type Result struct {
 // HitSet is the container of all Hits, plus a Total.Value which may tell you
 // the total number of matching documents.
 type HitSet struct {
-	Total struct {
-		Value int
-	}
-	Hits []Hit
-	mu   sync.Mutex
+	Total HitSetTotal
+	Hits  []Hit
+	mu    sync.Mutex
+}
+
+type HitSetTotal struct {
+	Value int
 }
 
 // AddHit can be used if constructing your own Hits manually. It is thread safe.

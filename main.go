@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/deneonet/benc/bpre"
-	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/wtsi-hgi/go-farmer/cache"
 	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
 	"gopkg.in/yaml.v3"
 )
@@ -81,7 +81,7 @@ func main() {
 		log.Fatalf("%s\n", err)
 	}
 
-	l, err := lru.New[string, *es.Result](cacheSize)
+	cq, err := cache.New(client, client, cacheSize)
 	if err != nil {
 		log.Fatalf("%s\n", err)
 	}
@@ -102,6 +102,13 @@ func main() {
 
 		return
 	}
+
+	ldb, err := NewLocalDB(dbPath)
+	if err != nil {
+		log.Fatalf("%s\n", err)
+	}
+
+	cq.Scroller = ldb
 
 	t := time.Now()
 
@@ -161,7 +168,7 @@ func main() {
 		},
 	}
 
-	result, err := Search(l, client, index, bomQuery)
+	result, err := cq.Search(index, bomQuery)
 	if err != nil {
 		log.Fatalf("Error searching: %s", err)
 	}
@@ -186,21 +193,25 @@ func main() {
 		gte = "2024-06-03T00:00:00Z"
 	}
 
-	filter := es.Filter{
-		{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
-		{"range": map[string]interface{}{
-			"timestamp": map[string]string{
-				"lte":    lte,
-				"gte":    gte,
-				"format": "strict_date_optional_time",
-			},
-		}},
-		{"match_phrase": map[string]interface{}{"BOM": "Human Genetics"}},
-		{"match_phrase": map[string]interface{}{"ACCOUNTING_NAME": "hgi"}},
+	teamQuery := &es.Query{
+		Size: maxSize,
+		Sort: []string{"_doc"},
+		Query: &es.QueryFilter{Bool: es.QFBool{Filter: es.Filter{
+			{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
+			{"range": map[string]interface{}{
+				"timestamp": map[string]string{
+					"lte":    lte,
+					"gte":    gte,
+					"format": "strict_date_optional_time",
+				},
+			}},
+			{"match_phrase": map[string]interface{}{"BOM": "Human Genetics"}},
+			{"match_phrase": map[string]interface{}{"ACCOUNTING_NAME": "hgi"}},
+		}}},
 	}
 
 	t = time.Now()
-	result, err = Scroll(l, dbPath, client, index, filter)
+	result, err = cq.Scroll(index, teamQuery)
 	if err != nil {
 		log.Fatalf("Error searching: %s", err)
 	}
@@ -221,7 +232,7 @@ func main() {
 	fmt.Printf("took: %s\n\n", time.Since(t))
 
 	t = time.Now()
-	result, err = Search(l, client, index, bomQuery)
+	result, err = cq.Search(index, bomQuery)
 	if err != nil {
 		log.Fatalf("Error searching: %s", err)
 	}
@@ -238,7 +249,7 @@ func main() {
 	fmt.Printf("took: %s\n\n", time.Since(t))
 
 	t = time.Now()
-	result, err = Scroll(l, dbPath, client, index, filter)
+	result, err = cq.Scroll(index, teamQuery)
 	if err != nil {
 		log.Fatalf("Error searching: %s", err)
 	}
@@ -527,46 +538,8 @@ func btoi(b []byte) int {
 	return int(binary.BigEndian.Uint32(b[0:4]))
 }
 
-func Search(l *lru.Cache[string, *es.Result], client *es.Client, index string, query *es.Query) (*es.Result, error) {
-	cacheKey := query.Key()
-
-	result, ok := l.Get(cacheKey)
-	if ok {
-		return result, nil
-	}
-
-	result, err := client.Search(index, query)
-	if err != nil {
-		return nil, err
-	}
-
-	l.Add(cacheKey, result)
-
-	return result, nil
-}
-
-func Scroll(l *lru.Cache[string, *es.Result], dbPath string, client *es.Client, index string, filter es.Filter) (*es.Result, error) {
-	query := &es.Query{
-		Size:  maxSize,
-		Sort:  []string{"_doc"},
-		Query: &es.QueryFilter{Bool: es.QFBool{Filter: filter}},
-	}
-
-	cacheKey := query.Key()
-
-	result, ok := l.Get(cacheKey)
-	if ok {
-		return result, nil
-	}
-
-	result, err := searchLocal(dbPath, query)
-	if err != nil {
-		return nil, err
-	}
-
-	l.Add(cacheKey, result)
-
-	return result, nil
+func (l *LocalDB) Scroll(_ string, query *es.Query) (*es.Result, error) {
+	return searchLocal(l.dir, query)
 }
 
 type LocalFilter struct {
