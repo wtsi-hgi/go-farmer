@@ -158,7 +158,6 @@ linters:
     - unconvert
     - unparam
     - usestdlibvars
-    - varnamelen
     - wastedassign
     - whitespace
     - wsl
@@ -192,5 +191,6 @@ linters:
   #   - testableexamples
   #   - testifylint
   #   - testpackage
+  #   - varnamelen
   #   - wrapcheck
   #   - zerologlint

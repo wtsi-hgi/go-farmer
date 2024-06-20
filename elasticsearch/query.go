@@ -36,13 +36,15 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dgryski/go-farm"
 )
 
 const (
-	MaxSize    = 10000
-	searchPage = "_search"
+	ErrNoTimestampRange = "no timestamp range found"
+	MaxSize             = 10000
+	searchPage          = "_search"
 )
 
 // Query describes the search query you wish to run against Elastic Search.
@@ -96,7 +98,41 @@ type QFBool struct {
 	Filter Filter `json:"filter"`
 }
 
-type Filter []map[string]map[string]interface{}
+type MapStringStringOrMap map[string]interface{}
+
+// GetMapString returns the string value of the given subKey of the map with the
+// given key in this map. Returns blank string if the keys didn't exist, or the
+// value wasn't a string.
+func (m MapStringStringOrMap) GetMapString(key, subKey string) string {
+	keyInterface, ok := m[key]
+	if !ok {
+		return ""
+	}
+
+	keyInterfaceMap, ok := keyInterface.(map[string]interface{})
+	if ok { //nolint:nestif
+		subKeyInterface, ok2 := keyInterfaceMap[subKey]
+		if !ok2 {
+			return ""
+		}
+
+		subKeyStr, ok2 := subKeyInterface.(string)
+		if !ok2 {
+			return ""
+		}
+
+		return subKeyStr
+	}
+
+	subKeyInterface, ok := keyInterface.(map[string]string)
+	if !ok {
+		return ""
+	}
+
+	return subKeyInterface[subKey]
+}
+
+type Filter []map[string]MapStringStringOrMap
 
 // NewQuery looks at the given Request method, path, body and parameters to see
 // if it's a search request, and converts it to a Query if so. The booleon will
@@ -173,4 +209,68 @@ func (q *Query) asBody() (*bytes.Reader, error) {
 	}
 
 	return bytes.NewReader(queryBytes), nil
+}
+
+// DateRange looks at the query's range->timestamp and returns the lte and gte
+// values. Returns an error if none were found.
+func (q *Query) DateRange() (lte time.Time, gte time.Time, err error) { //nolint:gocognit
+	for _, val := range q.Query.Bool.Filter {
+		fRange, ok := val["range"]
+		if !ok {
+			continue
+		}
+
+		lteStr := fRange.GetMapString("timestamp", "lte")
+		if lteStr == "" {
+			continue
+		}
+
+		lte, err = time.Parse(time.RFC3339, lteStr)
+		if err != nil {
+			return lte, gte, err
+		}
+
+		gteStr := fRange.GetMapString("timestamp", "gte")
+		if gteStr == "" {
+			continue
+		}
+
+		gte, err = time.Parse(time.RFC3339, gteStr)
+		if err != nil {
+			return lte, gte, err
+		}
+
+		return lte, gte, err
+	}
+
+	return lte, gte, Error{Msg: ErrNoTimestampRange}
+}
+
+// Filters returns the match_phrase and prefix key value pairs found in the
+// query's filter. Returns an empty map if none found.
+func (q *Query) Filters() map[string]string {
+	filters := make(map[string]string)
+
+	for _, val := range q.Query.Bool.Filter {
+		addKeyValsToFilters(val, "match_phrase", filters)
+		addKeyValsToFilters(val, "prefix", filters)
+	}
+
+	return filters
+}
+
+func addKeyValsToFilters(val map[string]MapStringStringOrMap, key string, filters map[string]string) {
+	thisMap, ok := val[key]
+	if !ok {
+		return
+	}
+
+	for key, val := range thisMap {
+		valStr, ok := val.(string)
+		if !ok {
+			continue
+		}
+
+		filters[key] = valStr
+	}
 }

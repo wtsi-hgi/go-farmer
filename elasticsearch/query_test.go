@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -136,5 +137,75 @@ func TestQuery(t *testing.T) {
 		So(key6, ShouldNotBeBlank)
 		So(key6, ShouldEqual, key5)
 		So(query.IsScroll(), ShouldBeTrue)
+	})
+
+	manualQuery := &Query{
+		Query: &QueryFilter{Bool: QFBool{Filter: Filter{
+			{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
+			{"range": map[string]interface{}{
+				"timestamp": map[string]string{
+					"lte":    "2024-05-04T00:10:00Z",
+					"gte":    "2024-05-04T00:00:00Z",
+					"format": "strict_date_optional_time",
+				},
+			}},
+			{"match_phrase": map[string]interface{}{"BOM": "Human Genetics"}},
+			{"match_phrase": map[string]interface{}{"ACCOUNTING_NAME": "hgi"}},
+		}}},
+	}
+
+	Convey("You can get the date range from a Query", t, func() {
+		expectedLTE, err := time.Parse(time.RFC3339, "2024-05-04T00:10:00Z")
+		So(err, ShouldBeNil)
+
+		expectedGTE, err := time.Parse(time.RFC3339, "2024-05-04T00:00:00Z")
+		So(err, ShouldBeNil)
+
+		query, err := newQueryFromReader(strings.NewReader(testNonAggQuery))
+		So(err, ShouldBeNil)
+
+		lte, gte, err := query.DateRange()
+		So(err, ShouldBeNil)
+		So(lte, ShouldEqual, expectedLTE)
+		So(gte, ShouldEqual, expectedGTE)
+
+		lte, gte, err = manualQuery.DateRange()
+		So(err, ShouldBeNil)
+		So(lte, ShouldEqual, expectedLTE)
+		So(gte, ShouldEqual, expectedGTE)
+
+		noRangeQuery := `{"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}}]}}}`
+		query, err = newQueryFromReader(strings.NewReader(noRangeQuery))
+		So(err, ShouldBeNil)
+
+		_, _, err = query.DateRange()
+		So(err, ShouldNotBeNil)
+	})
+
+	Convey("You can get the filters from a Query", t, func() {
+		matchesQuery := `{"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-05-04T00:10:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}},{"prefix":{"QUEUE_NAME":"normal"}},{"match_phrase":{"ACCOUNTING_NAME":"hgi"}}]}}}` //nolint:lll
+		query, err := newQueryFromReader(strings.NewReader(matchesQuery))
+		So(err, ShouldBeNil)
+
+		filters := query.Filters()
+		So(filters, ShouldResemble, map[string]string{
+			"META_CLUSTER_NAME": "farm",
+			"ACCOUNTING_NAME":   "hgi",
+			"QUEUE_NAME":        "normal",
+		})
+
+		filters = manualQuery.Filters()
+		So(filters, ShouldResemble, map[string]string{
+			"META_CLUSTER_NAME": "farm",
+			"ACCOUNTING_NAME":   "hgi",
+			"BOM":               "Human Genetics",
+		})
+
+		noMatchQuery := `{"query":{"bool":{"filter":[{"x":{"y":"z"}}]}}}`
+		query, err = newQueryFromReader(strings.NewReader(noMatchQuery))
+		So(err, ShouldBeNil)
+
+		filters = query.Filters()
+		So(len(filters), ShouldEqual, 0)
 	})
 }

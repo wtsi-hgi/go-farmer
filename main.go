@@ -583,18 +583,12 @@ type LocalFilter struct {
 }
 
 func NewLocalFilter(query *es.Query) (*LocalFilter, error) {
-	lte, gte, err := parseRange(query.Query.Bool.Filter)
-	if err != nil {
-		return nil, err
-	}
-
-	bom, err := queryToBomStr(query)
+	lte, gte, err := query.DateRange()
 	if err != nil {
 		return nil, err
 	}
 
 	filter := &LocalFilter{
-		BOM: bom,
 		LTE: lte,
 		GTE: gte,
 	}
@@ -603,7 +597,12 @@ func NewLocalFilter(query *es.Query) (*LocalFilter, error) {
 
 	// lteStamp := time.Unix(btoi64(filter.LTEKey), 0).UTC().Format(time.RFC3339)
 
-	filter.accountingName, filter.userName, filter.checkGPU = queryToFilters(query)
+	filter.BOM, filter.accountingName, filter.userName, filter.checkGPU = queryToFilters(query)
+
+	if filter.BOM == "" {
+		return nil, errors.New("BOM not specified")
+	}
+
 	filter.checkAccounting = len(filter.accountingName) > 0
 	filter.checkUser = len(filter.userName) > 0
 
@@ -815,107 +814,28 @@ func searchLocalFile(dbFilePath string, filter *LocalFilter, hitset *es.HitSet, 
 	f.Close()
 }
 
-func parseRange(filter es.Filter) (lte time.Time, gte time.Time, err error) {
-	for _, val := range filter {
-		fRange, ok := val["range"]
-		if !ok {
-			continue
-		}
+func queryToFilters(query *es.Query) (bom string, accountingName, userName []byte, checkGPU bool) {
+	filters := query.Filters()
 
-		timestampInterface, ok := fRange["timestamp"]
-		if !ok {
-			break
-		}
+	bom = filters["BOM"]
 
-		timestamp, ok := timestampInterface.(map[string]string)
-		if !ok {
-			break
-		}
-
-		lte, err = time.Parse(time.RFC3339, timestamp["lte"])
-		if err != nil {
-			return
-		}
-
-		gte, err = time.Parse(time.RFC3339, timestamp["gte"])
-		if err != nil {
-			return
-		}
-
-		return
-	}
-
-	err = errors.New("no timestamp range found")
-
-	return
-}
-
-func queryToBomStr(query *es.Query) (string, error) {
-	for _, val := range query.Query.Bool.Filter {
-		mp, ok := val["match_phrase"]
-		if !ok {
-			continue
-		}
-
-		bomStr := stringFromFilterValue(mp, "BOM")
-		if bomStr == "" {
-			continue
-		}
-
-		return bomStr, nil
-	}
-
-	return "", errors.New("BOM not specified")
-}
-
-func stringFromFilterValue(fv map[string]interface{}, key string) string {
-	keyInterface, ok := fv[key]
-	if !ok {
-		return ""
-	}
-
-	keyString, ok := keyInterface.(string)
-	if !ok {
-		return ""
-	}
-
-	return keyString
-}
-
-func queryToFilters(query *es.Query) (accountingName, userName []byte, checkGPU bool) {
-	for _, val := range query.Query.Bool.Filter {
-		mp, ok := val["match_phrase"]
-		if !ok {
-			continue
-		}
-
-		thisStr := stringFromFilterValue(mp, "ACCOUNTING_NAME")
-		if thisStr != "" {
-			if b, err := fixedWidthGroup(thisStr); err == nil {
-				accountingName = b
-			}
-		}
-
-		thisStr = stringFromFilterValue(mp, "USER_NAME")
-		if thisStr != "" {
-			if b, err := fixedWidthUser(thisStr); err == nil {
-				userName = b
-			}
+	aname, ok := filters["ACCOUNTING_NAME"]
+	if ok {
+		if b, err := fixedWidthGroup(aname); err == nil {
+			accountingName = b
 		}
 	}
 
-	for _, val := range query.Query.Bool.Filter {
-		p, ok := val["prefix"]
-		if !ok {
-			continue
+	uname, ok := filters["USER_NAME"]
+	if ok {
+		if b, err := fixedWidthUser(uname); err == nil {
+			userName = b
 		}
+	}
 
-		thisStr := stringFromFilterValue(p, "QUEUE_NAME")
-		if thisStr == "gpu" {
-			checkGPU = true
-
-			break
-		}
+	qname, ok := filters["QUEUE_NAME"]
+	if ok && strings.HasPrefix(qname, "gpu") {
+		checkGPU = true
 	}
 
 	return
