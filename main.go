@@ -76,7 +76,7 @@ func main() {
 		Password: c.Elastic.Password,
 	}
 
-	client, err := es.NewClient(cfg)
+	client, err := es.NewClient(cfg, index)
 	if err != nil {
 		log.Fatalf("%s\n", err)
 	}
@@ -168,7 +168,7 @@ func main() {
 		},
 	}
 
-	result, err := cq.Search(index, bomQuery)
+	result, err := cq.Search(bomQuery)
 	if err != nil {
 		log.Fatalf("Error searching: %s", err)
 	}
@@ -211,7 +211,7 @@ func main() {
 	}
 
 	t = time.Now()
-	result, err = cq.Scroll(index, teamQuery)
+	result, err = cq.Scroll(teamQuery)
 	if err != nil {
 		log.Fatalf("Error searching: %s", err)
 	}
@@ -232,7 +232,7 @@ func main() {
 	fmt.Printf("took: %s\n\n", time.Since(t))
 
 	t = time.Now()
-	result, err = cq.Search(index, bomQuery)
+	result, err = cq.Search(bomQuery)
 	if err != nil {
 		log.Fatalf("Error searching: %s", err)
 	}
@@ -249,7 +249,7 @@ func main() {
 	fmt.Printf("took: %s\n\n", time.Since(t))
 
 	t = time.Now()
-	result, err = cq.Scroll(index, teamQuery)
+	result, err = cq.Scroll(teamQuery)
 	if err != nil {
 		log.Fatalf("Error searching: %s", err)
 	}
@@ -299,7 +299,7 @@ func initDB(dbPath string, client *es.Client) error {
 
 	t := time.Now()
 
-	result, err := client.Scroll(index, query)
+	result, err := client.Scroll(query)
 	if err != nil {
 		return err
 	}
@@ -538,7 +538,7 @@ func btoi(b []byte) int {
 	return int(binary.BigEndian.Uint32(b[0:4]))
 }
 
-func (l *LocalDB) Scroll(_ string, query *es.Query) (*es.Result, error) {
+func (l *LocalDB) Scroll(query *es.Query) (*es.Result, error) {
 	return searchLocal(l.dir, query)
 }
 

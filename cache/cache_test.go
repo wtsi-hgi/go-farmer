@@ -43,13 +43,13 @@ type mockSearchScroller struct {
 	scrollCalls int
 }
 
-func (m *mockSearchScroller) Search(index string, query *es.Query) (*es.Result, error) {
+func (m *mockSearchScroller) Search(query *es.Query) (*es.Result, error) {
 	m.searchCalls++
 
-	return m.querier(index, query)
+	return m.querier(query)
 }
 
-func (m *mockSearchScroller) querier(_ string, query *es.Query) (*es.Result, error) {
+func (m *mockSearchScroller) querier(query *es.Query) (*es.Result, error) {
 	filters := query.Filters()
 
 	total, err := strconv.Atoi(filters["total"])
@@ -66,10 +66,10 @@ func (m *mockSearchScroller) querier(_ string, query *es.Query) (*es.Result, err
 	}, nil
 }
 
-func (m *mockSearchScroller) Scroll(index string, query *es.Query) (*es.Result, error) {
+func (m *mockSearchScroller) Scroll(query *es.Query) (*es.Result, error) {
 	m.scrollCalls++
 
-	return m.querier(index, query)
+	return m.querier(query)
 }
 
 func TestCache(t *testing.T) {
@@ -90,12 +90,12 @@ func TestCache(t *testing.T) {
 		Convey("You can get uncached, then cached Search results", func() {
 			So(ss.searchCalls, ShouldEqual, 0)
 
-			results, err := cq.Search(index, query)
+			results, err := cq.Search(query)
 			So(err, ShouldBeNil)
 			So(results.HitSet.Total.Value, ShouldEqual, expectedTotal)
 			So(ss.searchCalls, ShouldEqual, 1)
 
-			results, err = cq.Search(index, query)
+			results, err = cq.Search(query)
 			So(err, ShouldBeNil)
 			So(results.HitSet.Total.Value, ShouldEqual, expectedTotal)
 			So(ss.searchCalls, ShouldEqual, 1)
@@ -109,18 +109,18 @@ func TestCache(t *testing.T) {
 					}}},
 				}
 
-				results, err := cq.Search(index, query2)
+				results, err := cq.Search(query2)
 				So(err, ShouldBeNil)
 				So(results.HitSet.Total.Value, ShouldEqual, expectedTotal2)
 				So(ss.searchCalls, ShouldEqual, 2)
 
-				results, err = cq.Search(index, query2)
+				results, err = cq.Search(query2)
 				So(err, ShouldBeNil)
 				So(results.HitSet.Total.Value, ShouldEqual, expectedTotal2)
 				So(ss.searchCalls, ShouldEqual, 2)
 				So(ss.scrollCalls, ShouldEqual, 0)
 
-				results, err = cq.Search(index, query)
+				results, err = cq.Search(query)
 				So(err, ShouldBeNil)
 				So(results.HitSet.Total.Value, ShouldEqual, expectedTotal)
 				So(ss.searchCalls, ShouldEqual, 2)
@@ -133,22 +133,22 @@ func TestCache(t *testing.T) {
 						}}},
 					}
 
-					results, err := cq.Search(index, query3)
+					results, err := cq.Search(query3)
 					So(err, ShouldBeNil)
 					So(results.HitSet.Total.Value, ShouldEqual, expectedTotal3)
 					So(ss.searchCalls, ShouldEqual, 3)
 
-					results, err = cq.Search(index, query3)
+					results, err = cq.Search(query3)
 					So(err, ShouldBeNil)
 					So(results.HitSet.Total.Value, ShouldEqual, expectedTotal3)
 					So(ss.searchCalls, ShouldEqual, 3)
 
-					results, err = cq.Search(index, query)
+					results, err = cq.Search(query)
 					So(err, ShouldBeNil)
 					So(results.HitSet.Total.Value, ShouldEqual, expectedTotal)
 					So(ss.searchCalls, ShouldEqual, 3)
 
-					results, err = cq.Search(index, query2)
+					results, err = cq.Search(query2)
 					So(err, ShouldBeNil)
 					So(results.HitSet.Total.Value, ShouldEqual, expectedTotal2)
 					So(ss.searchCalls, ShouldEqual, 4)
@@ -159,12 +159,12 @@ func TestCache(t *testing.T) {
 		Convey("You can get uncached, then cached Scroll results", func() {
 			So(ss.scrollCalls, ShouldEqual, 0)
 
-			results, err := cq.Scroll(index, query)
+			results, err := cq.Scroll(query)
 			So(err, ShouldBeNil)
 			So(results.HitSet.Total.Value, ShouldEqual, expectedTotal)
 			So(ss.scrollCalls, ShouldEqual, 1)
 
-			results, err = cq.Scroll(index, query)
+			results, err = cq.Scroll(query)
 			So(err, ShouldBeNil)
 			So(results.HitSet.Total.Value, ShouldEqual, expectedTotal)
 			So(ss.scrollCalls, ShouldEqual, 1)

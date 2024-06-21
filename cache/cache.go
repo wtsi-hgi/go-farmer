@@ -33,16 +33,16 @@ import (
 // Searcher types have a Search function for querying something like elastic
 // search.
 type Searcher interface {
-	Search(index string, query *es.Query) (*es.Result, error)
+	Search(query *es.Query) (*es.Result, error)
 }
 
 // Scroller types have a Scroll function for querying something like elastic
 // search, automatically getting all hits in a single scroll call.
 type Scroller interface {
-	Scroll(index string, query *es.Query) (*es.Result, error)
+	Scroll(query *es.Query) (*es.Result, error)
 }
 
-type querier func(index string, query *es.Query) (*es.Result, error)
+type querier func(query *es.Query) (*es.Result, error)
 
 // CachedQuerier is an LRU cache wrapper around a Searcher and a Scroller.
 type CachedQuerier struct {
@@ -69,11 +69,11 @@ func New(searcher Searcher, scroller Scroller, cacheSize int) (*CachedQuerier, e
 
 // Search returns any cached result for the given query, otherwise returns the
 // result of calling our Searcher.Search().
-func (c *CachedQuerier) Search(index string, query *es.Query) (*es.Result, error) {
-	return c.wrapWithCache(c.Searcher.Search, index, query)
+func (c *CachedQuerier) Search(query *es.Query) (*es.Result, error) {
+	return c.wrapWithCache(c.Searcher.Search, query)
 }
 
-func (c *CachedQuerier) wrapWithCache(querier querier, index string, query *es.Query) (*es.Result, error) {
+func (c *CachedQuerier) wrapWithCache(querier querier, query *es.Query) (*es.Result, error) {
 	cacheKey := query.Key()
 
 	result, ok := c.lru.Get(cacheKey)
@@ -81,7 +81,7 @@ func (c *CachedQuerier) wrapWithCache(querier querier, index string, query *es.Q
 		return result, nil
 	}
 
-	result, err := querier(index, query)
+	result, err := querier(query)
 	if err != nil {
 		return nil, err
 	}
@@ -93,6 +93,6 @@ func (c *CachedQuerier) wrapWithCache(querier querier, index string, query *es.Q
 
 // Scroll returns any cached result for the given query, otherwise returns the
 // result of calling our Scroller.Scroll().
-func (c *CachedQuerier) Scroll(index string, query *es.Query) (*es.Result, error) {
-	return c.wrapWithCache(c.Scroller.Scroll, index, query)
+func (c *CachedQuerier) Scroll(query *es.Query) (*es.Result, error) {
+	return c.wrapWithCache(c.Scroller.Scroll, query)
 }

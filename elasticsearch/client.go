@@ -52,13 +52,14 @@ type Config struct {
 
 // Client is used to interact with an Elastic Search server.
 type Client struct {
+	index  string
 	client *es.Client
 	Error  error
 }
 
 // NewClient returns a Client that can talk to the configured Elastic Search
-// server.
-func NewClient(config Config) (*Client, error) {
+// server and will use the given index for queries.
+func NewClient(config Config, index string) (*Client, error) {
 	cfg := es.Config{
 		Addresses: []string{
 			fmt.Sprintf("%s://%s:%d", config.Scheme, config.Host, config.Port),
@@ -70,7 +71,7 @@ func NewClient(config Config) (*Client, error) {
 
 	client, err := es.NewClient(cfg)
 
-	return &Client{client: client}, err
+	return &Client{client: client, index: index}, err
 }
 
 // ElasticInfo is the type returned by an Info() request. It just tells you the
@@ -95,17 +96,17 @@ func (c *Client) Info() (*ElasticInfo, error) {
 	return info, err
 }
 
-// Search uses the given index and query to get back your desired search
+// Search uses out index and the given query to get back your desired search
 // results. If there are more than 10,000 hits, you won't get them (use Scroll
 // instead).
-func (c *Client) Search(index string, query *Query) (*Result, error) {
+func (c *Client) Search(query *Query) (*Result, error) {
 	qbody, err := query.asBody()
 	if err != nil {
 		return nil, err
 	}
 
 	resp, err := c.client.Search(
-		c.client.Search.WithIndex(index),
+		c.client.Search.WithIndex(c.index),
 		c.client.Search.WithBody(qbody),
 	)
 	if err != nil {
@@ -115,16 +116,16 @@ func (c *Client) Search(index string, query *Query) (*Result, error) {
 	return parseResultResponse(resp)
 }
 
-// Scroll uses the given index and query to get back your desired search
+// Scroll uses out index and the given query to get back your desired search
 // results. It auto-scrolls and returns all your hits in one go.
-func (c *Client) Scroll(index string, query *Query) (*Result, error) {
+func (c *Client) Scroll(query *Query) (*Result, error) {
 	qbody, err := query.asBody()
 	if err != nil {
 		return nil, err
 	}
 
 	resp, err := c.client.Search(
-		c.client.Search.WithIndex(index),
+		c.client.Search.WithIndex(c.index),
 		c.client.Search.WithBody(qbody),
 		c.client.Search.WithSize(MaxSize),
 		c.client.Search.WithScroll(scrollTime),

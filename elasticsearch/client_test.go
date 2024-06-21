@@ -197,7 +197,7 @@ func doClientTests(t *testing.T, config Config, index string, expectedNumHits in
 	t.Helper()
 
 	Convey("You can create an elasticsearch client", func() {
-		client, err := NewClient(config)
+		client, err := NewClient(config, index)
 		So(err, ShouldBeNil)
 		So(client, ShouldNotBeNil)
 
@@ -212,7 +212,7 @@ func doClientTests(t *testing.T, config Config, index string, expectedNumHits in
 			So(err, ShouldBeNil)
 
 			Convey("You can do a Search", func() {
-				result, err := client.Search(index, query)
+				result, err := client.Search(query)
 				So(err, ShouldBeNil)
 				So(result, ShouldNotBeNil)
 				So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 6)
@@ -228,7 +228,7 @@ func doClientTests(t *testing.T, config Config, index string, expectedNumHits in
 			So(err, ShouldBeNil)
 
 			Convey("You can do a Search", func() {
-				result, err := client.Search(index, query)
+				result, err := client.Search(query)
 				So(err, ShouldBeNil)
 				So(result, ShouldNotBeNil)
 				So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 0)
@@ -237,7 +237,7 @@ func doClientTests(t *testing.T, config Config, index string, expectedNumHits in
 			})
 
 			Convey("You can do a Scroll which always returns all hits", func() {
-				result, err := client.Scroll(index, query)
+				result, err := client.Scroll(query)
 				So(err, ShouldBeNil)
 				So(client.Error, ShouldBeNil)
 				So(result, ShouldNotBeNil)
@@ -248,7 +248,7 @@ func doClientTests(t *testing.T, config Config, index string, expectedNumHits in
 
 			Convey("Search results change based on size and source", func() {
 				query.Size = MaxSize
-				result, err := client.Search(index, query)
+				result, err := client.Search(query)
 				So(err, ShouldBeNil)
 				So(result, ShouldNotBeNil)
 				So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 0)
@@ -264,7 +264,7 @@ func doClientTests(t *testing.T, config Config, index string, expectedNumHits in
 				So(string(jsonBytes), ShouldContainSubstring, "USER_NAME")
 
 				query.Source = []string{"USER_NAME", "QUEUE_NAME"}
-				result, err = client.Search(index, query)
+				result, err = client.Search(query)
 				So(err, ShouldBeNil)
 				So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 0)
 				So(len(result.HitSet.Hits), ShouldEqual, expectedNumHits)
@@ -286,7 +286,7 @@ func doClientTests(t *testing.T, config Config, index string, expectedNumHits in
 			So(err, ShouldBeNil)
 
 			Convey("You can do a Scroll which auto-scrolls", func() {
-				result, err := client.Scroll(index, query)
+				result, err := client.Scroll(query)
 				So(err, ShouldBeNil)
 				So(result, ShouldNotBeNil)
 				So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 0)
