@@ -239,6 +239,7 @@ func doClientTests(t *testing.T, config Config, index string, expectedNumHits in
 			Convey("You can do a Scroll which always returns all hits", func() {
 				result, err := client.Scroll(index, query)
 				So(err, ShouldBeNil)
+				So(client.Error, ShouldBeNil)
 				So(result, ShouldNotBeNil)
 				So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 0)
 				So(len(result.HitSet.Hits), ShouldEqual, expectedNumHits)
