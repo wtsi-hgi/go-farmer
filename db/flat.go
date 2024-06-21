@@ -27,8 +27,14 @@ package db
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/binary"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+
+	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
 )
 
 type flatDB struct {
@@ -120,4 +126,89 @@ func (f *flatDB) Close() error {
 	f.w.Flush()
 
 	return f.f.Close()
+}
+
+func scrollFlatFile(dbFilePath string, filter *flatFilter, result *es.Result, fileBufferSize int) error { //nolint:funlen,gocognit,gocyclo,cyclop,lll
+	f, err := os.Open(dbFilePath)
+	if err != nil {
+		return err
+	}
+
+	tsBuf := make([]byte, timeStampWidth)
+	accBuf := make([]byte, accountingNameWidth)
+	userBuf := make([]byte, userNameWidth)
+	lenBuf := make([]byte, lengthEncodeWidth)
+	detailsBuf := make([]byte, detailsBufferLength)
+	br := bufio.NewReaderSize(f, fileBufferSize)
+
+	for {
+		_, err = io.ReadFull(br, tsBuf)
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				return err
+			}
+
+			break
+		}
+
+		if bytes.Compare(tsBuf, filter.LTEKey) > 0 {
+			break
+		}
+
+		check := filter.PassChecker()
+
+		if bytes.Compare(tsBuf, filter.GTEKey) < 0 {
+			check.Fail()
+		}
+
+		_, err = io.ReadFull(br, accBuf)
+		if err != nil {
+			return err
+		}
+
+		check.AccountingName(accBuf)
+
+		_, err = io.ReadFull(br, userBuf)
+		if err != nil {
+			return err
+		}
+
+		check.UserName(userBuf)
+
+		gpuByte, err := br.ReadByte()
+		if err != nil {
+			return err
+		}
+
+		check.GPU(gpuByte)
+
+		_, err = io.ReadFull(br, lenBuf)
+		if err != nil {
+			return err
+		}
+
+		detailsLength := btoi(lenBuf)
+
+		buf := detailsBuf[0:detailsLength]
+
+		_, err = io.ReadFull(br, buf)
+		if err != nil {
+			return err
+		}
+
+		if check.Passes() {
+			d, err := es.DeserializeDetails(buf)
+			if err != nil {
+				return err
+			}
+
+			result.AddHitDetails(d)
+		}
+	}
+
+	return f.Close()
+}
+
+func btoi(b []byte) int {
+	return int(binary.BigEndian.Uint32(b[0:4]))
 }

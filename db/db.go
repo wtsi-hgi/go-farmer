@@ -29,9 +29,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/deneonet/benc/bpre"
@@ -47,10 +49,13 @@ const (
 	bomWidth            = 34
 	accountingNameWidth = 24
 	userNameWidth       = 12
+	gpuPrefix           = "gpu"
 	notInGPUQueue       = byte(1)
 	inGPUQueue          = byte(2)
 	lengthEncodeWidth   = 4
 	detailsBufferLength = 16 * 1024
+
+	oneDay = 24 * time.Hour
 
 	dateFormat = "2006/01/02"
 )
@@ -73,32 +78,63 @@ func (e Error) Error() string {
 // DB represents a local database that uses a number of flat files to store
 // elasticsearch hit details and return them quickly.
 type DB struct {
-	dir        string
-	fileSize   int
-	bufferSize int
-	dbs        map[string]*flatDB
+	dir         string
+	fileSize    int
+	bufferSize  int
+	dbs         map[string]*flatDB
+	dateBOMDirs map[string][]string
 }
 
 // New returns a DB that will create or use the database files in the given
 // directory. Files created will be split if they get over the given fileSize in
 // bytes. Files will be read and written using a bufferSize buffer in bytes.
 func New(dir string, fileSize, bufferSize int) (*DB, error) {
-	err := os.MkdirAll(dir, dbDirPerms)
+	dateBOMDirs := make(map[string][]string)
+
+	_, err := os.Stat(dir)
+	if err == nil {
+		err = findFlatFiles(dir, dateBOMDirs)
+	} else {
+		err = os.MkdirAll(dir, dbDirPerms)
+	}
+
 	if err != nil {
 		return nil, err
 	}
 
 	return &DB{
-		dir:        dir,
-		fileSize:   fileSize,
-		bufferSize: bufferSize,
-		dbs:        make(map[string]*flatDB),
+		dir:         dir,
+		fileSize:    fileSize,
+		bufferSize:  bufferSize,
+		dbs:         make(map[string]*flatDB),
+		dateBOMDirs: dateBOMDirs,
 	}, nil
+}
+
+func findFlatFiles(dir string, dateBOMDirs map[string][]string) error {
+	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if !d.Type().IsRegular() {
+			return nil
+		}
+
+		subDir := filepath.Dir(path)
+
+		dateBOMDirs[subDir] = append(dateBOMDirs[subDir], path)
+
+		return nil
+	})
 }
 
 // Store stores the Details in the Hits of the given Result in flat database
 // files in our directory, that can later be retrieved via Scroll(). Call
 // Close() after using this for the last time.
+//
+// NB: What you Store() with this DB will not be available to Scroll(). You will
+// need to Close() this DB and make a New() one to Scroll() the stored hits.
 func (d *DB) Store(result *es.Result) error {
 	bpre.Marshal(detailsBufferLength)
 
@@ -140,7 +176,7 @@ func getFixedWidthFields(hit es.Hit) ([]byte, []byte, byte, []byte, error) {
 	}
 
 	isGPU := notInGPUQueue
-	if strings.HasPrefix(hit.Details.QueueName, "gpu") {
+	if strings.HasPrefix(hit.Details.QueueName, gpuPrefix) {
 		isGPU = inGPUQueue
 	}
 
@@ -194,6 +230,57 @@ func i32tob(v int32) []byte {
 	binary.BigEndian.PutUint32(b, uint32(v))
 
 	return b
+}
+
+// Scroll returns all the hits that pass certain match and prefix filter terms
+// in the given query, in the query's timestamp date range (which must be
+// expressed with specific lte and gte RFC3339 values).
+func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
+	filter, err := newFlatFilter(query)
+	if err != nil {
+		return nil, err
+	}
+
+	result := es.NewResult()
+
+	var wg sync.WaitGroup
+
+	d.scrollRequestedDays(&wg, filter, result)
+
+	wg.Wait()
+
+	errors := result.Errors()
+	if len(errors) > 0 {
+		return nil, errors[0]
+	}
+
+	return result, nil
+}
+
+func (d *DB) scrollRequestedDays(wg *sync.WaitGroup, filter *flatFilter, result *es.Result) {
+	currentDay := filter.GTE
+
+	for {
+		fileKey := currentDay.UTC().Format(dateFormat)
+		paths := d.dateBOMDirs[fmt.Sprintf("%s/%s/%s", d.dir, fileKey, filter.BOM)]
+
+		wg.Add(len(paths))
+
+		for _, path := range paths {
+			go func(dbFilePath string) {
+				defer wg.Done()
+
+				if err := scrollFlatFile(dbFilePath, filter, result, d.bufferSize); err != nil {
+					result.AddError(err)
+				}
+			}(path)
+		}
+
+		currentDay = currentDay.Add(oneDay)
+		if currentDay.After(filter.LTE) {
+			break
+		}
+	}
 }
 
 // Close closes any open filehandles. You must call this after your last use of

@@ -33,7 +33,6 @@ import (
 
 	bstd "github.com/deneonet/benc"
 	"github.com/deneonet/benc/bpre"
-	"github.com/deneonet/benc/bunsafe"
 	"github.com/elastic/go-elasticsearch/v7/esapi"
 )
 
@@ -61,6 +60,47 @@ type Result struct {
 	TimedOut     bool    `json:"timed_out"`
 	HitSet       *HitSet `json:"hits"`
 	Aggregations Aggregations
+	errors       []error
+	mu           sync.Mutex
+}
+
+// NewResult returns a Result with an empty HitSet in it, suitable for adding
+// hits and errors to.
+func NewResult() *Result {
+	return &Result{
+		HitSet: &HitSet{},
+	}
+}
+
+// AddHitDetails can be used if constructing your own Hits manually, and don't
+// care about the Hit's ID. It is thread safe.
+func (r *Result) AddHitDetails(details *Details) {
+	r.HitSet.AddHit("", details)
+}
+
+// AddError can be used to store errors generated while creating a Result in a
+// thread-safe way.
+func (r *Result) AddError(err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.errors = append(r.errors, err)
+}
+
+// Errors returns any errors that were passed to AddError(). Returns nil if
+// AddError() was not used.
+func (r *Result) Errors() []error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if len(r.errors) == 0 {
+		return nil
+	}
+
+	result := make([]error, len(r.errors))
+	copy(result, r.errors)
+
+	return result
 }
 
 // HitSet is the container of all Hits, plus a Total.Value which may tell you
@@ -194,7 +234,7 @@ func DeserializeDetails(encoded []byte) (*Details, error) { //nolint:funlen,goco
 		err error
 	)
 
-	n, details.AccountingName, err = bunsafe.UnmarshalString(0, encoded)
+	n, details.AccountingName, err = bstd.UnmarshalString(0, encoded)
 	if err != nil {
 		return nil, err
 	}
@@ -204,12 +244,12 @@ func DeserializeDetails(encoded []byte) (*Details, error) { //nolint:funlen,goco
 		return nil, err
 	}
 
-	n, details.BOM, err = bunsafe.UnmarshalString(n, encoded)
+	n, details.BOM, err = bstd.UnmarshalString(n, encoded)
 	if err != nil {
 		return nil, err
 	}
 
-	n, details.Command, err = bunsafe.UnmarshalString(n, encoded)
+	n, details.Command, err = bstd.UnmarshalString(n, encoded)
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +259,7 @@ func DeserializeDetails(encoded []byte) (*Details, error) { //nolint:funlen,goco
 		return nil, err
 	}
 
-	n, details.Job, err = bunsafe.UnmarshalString(n, encoded)
+	n, details.Job, err = bstd.UnmarshalString(n, encoded)
 	if err != nil {
 		return nil, err
 	}
@@ -244,7 +284,7 @@ func DeserializeDetails(encoded []byte) (*Details, error) { //nolint:funlen,goco
 		return nil, err
 	}
 
-	n, details.QueueName, err = bunsafe.UnmarshalString(n, encoded)
+	n, details.QueueName, err = bstd.UnmarshalString(n, encoded)
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +299,7 @@ func DeserializeDetails(encoded []byte) (*Details, error) { //nolint:funlen,goco
 		return nil, err
 	}
 
-	n, details.UserName, err = bunsafe.UnmarshalString(n, encoded)
+	n, details.UserName, err = bstd.UnmarshalString(n, encoded)
 	if err != nil {
 		return nil, err
 	}

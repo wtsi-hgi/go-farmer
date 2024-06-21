@@ -95,23 +95,56 @@ func TestHitSet(t *testing.T) {
 	Convey("You can add Hits to a HitSet in parallel", t, func() {
 		hitSet := &HitSet{}
 
-		var wg sync.WaitGroup //nolint:varnamelen
+		numHits := 100
+
+		runOpInParallel(func(id string) {
+			hitSet.AddHit(id, &Details{Command: "cmd." + id})
+		}, numHits)
+
+		So(len(hitSet.Hits), ShouldEqual, numHits)
+	})
+
+	Convey("You can add Hits to a Result in parallel", t, func() {
+		result := NewResult()
 
 		numHits := 100
 
-		wg.Add(numHits)
+		runOpInParallel(func(id string) {
+			result.AddHitDetails(&Details{Command: "cmd." + id})
+		}, numHits)
 
-		for i := range numHits {
-			id := strconv.Itoa(i)
+		So(len(result.HitSet.Hits), ShouldEqual, numHits)
+	})
+}
 
-			go func(id string) {
-				defer wg.Done()
-				hitSet.AddHit(id, &Details{Command: "cmd." + id})
-			}(id)
-		}
+func runOpInParallel(op func(string), count int) {
+	var wg sync.WaitGroup //nolint:varnamelen
 
-		wg.Wait()
+	wg.Add(count)
 
-		So(len(hitSet.Hits), ShouldEqual, numHits)
+	for i := range count {
+		id := strconv.Itoa(i)
+
+		go func(id string) {
+			defer wg.Done()
+
+			op(id)
+		}(id)
+	}
+
+	wg.Wait()
+}
+
+func TestResultErrors(t *testing.T) {
+	Convey("You can add errors to a Result in parallel", t, func() {
+		result := NewResult()
+
+		numErrors := 100
+
+		runOpInParallel(func(id string) {
+			result.AddError(Error{Msg: id})
+		}, numErrors)
+
+		So(len(result.Errors()), ShouldEqual, numErrors)
 	})
 }

@@ -29,6 +29,7 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -124,6 +125,9 @@ func TestDB(t *testing.T) {
 			b, err := os.ReadFile(filePath)
 			So(err, ShouldBeNil)
 
+			So(len(b), ShouldBeGreaterThanOrEqualTo, fileSize)
+			So(len(b), ShouldBeLessThan, fileSize*2)
+
 			So(b[0:timeStampWidth], ShouldResemble, []byte{0, 0, 0, 0, 101, 190, 211, 129})
 
 			stamp := timeStampBytesToFormatString(b[0:timeStampWidth])
@@ -172,6 +176,106 @@ func TestDB(t *testing.T) {
 			details, err = es.DeserializeDetails(detailsBytes)
 			So(err, ShouldBeNil)
 			So(details, ShouldResemble, result.HitSet.Hits[expectedNumHits-1].Details)
+
+			Convey("Which you can then retrieve via Scroll()", func() {
+				query := &es.Query{
+					Query: &es.QueryFilter{Bool: es.QFBool{Filter: es.Filter{
+						{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
+						{"range": map[string]interface{}{
+							"timestamp": map[string]string{
+								"lte":    lteStr,
+								"gte":    gteStr,
+								"format": "strict_date_optional_time",
+							},
+						}},
+					}}},
+				}
+
+				_, err = db.Scroll(query)
+				So(err, ShouldNotBeNil)
+
+				bomMatch := map[string]es.MapStringStringOrMap{"match_phrase": map[string]interface{}{"BOM": "bomA"}}
+				query.Query.Bool.Filter = append(query.Query.Bool.Filter, bomMatch)
+				retrieved, err := db.Scroll(query)
+				So(err, ShouldBeNil)
+				So(retrieved.HitSet.Hits, ShouldBeNil)
+
+				db, err = New(dbDir, fileSize, bufferSize)
+				So(err, ShouldBeNil)
+
+				retrieved, err = db.Scroll(query)
+				So(err, ShouldBeNil)
+				So(retrieved.HitSet, ShouldNotBeNil)
+
+				expectedBomHits := expectedNumHits / 2
+				So(len(retrieved.HitSet.Hits), ShouldEqual, expectedBomHits)
+
+				firstHitIndex := -1
+				lastHitIndex := -1
+
+				for i, retrievedHit := range retrieved.HitSet.Hits {
+					switch retrievedHit.Details.Timestamp {
+					case result.HitSet.Hits[1].Details.Timestamp:
+						firstHitIndex = i
+					case result.HitSet.Hits[expectedNumHits-1].Details.Timestamp:
+						lastHitIndex = i
+					}
+				}
+
+				So(firstHitIndex, ShouldNotEqual, -1)
+				So(retrieved.HitSet.Hits[firstHitIndex].Details, ShouldResemble, result.HitSet.Hits[1].Details)
+				So(lastHitIndex, ShouldNotEqual, -1)
+				So(retrieved.HitSet.Hits[lastHitIndex].Details, ShouldResemble, result.HitSet.Hits[expectedNumHits-1].Details)
+
+				aMatch := map[string]es.MapStringStringOrMap{"match_phrase": map[string]interface{}{"ACCOUNTING_NAME": "groupA"}}
+				query.Query.Bool.Filter = append(query.Query.Bool.Filter, aMatch)
+				retrieved, err = db.Scroll(query)
+				So(err, ShouldBeNil)
+				So(retrieved.HitSet, ShouldNotBeNil)
+				So(len(retrieved.HitSet.Hits), ShouldEqual, 69120)
+
+				uMatch := map[string]es.MapStringStringOrMap{"match_phrase": map[string]interface{}{"USER_NAME": "userA"}}
+				query.Query.Bool.Filter = append(query.Query.Bool.Filter, uMatch)
+				retrieved, err = db.Scroll(query)
+				So(err, ShouldBeNil)
+				So(retrieved.HitSet, ShouldNotBeNil)
+				So(len(retrieved.HitSet.Hits), ShouldEqual, 61440)
+
+				qMatch := map[string]es.MapStringStringOrMap{"match_phrase": map[string]interface{}{"QUEUE_NAME": "gpu-any"}}
+				query.Query.Bool.Filter = append(query.Query.Bool.Filter, qMatch)
+				retrieved, err = db.Scroll(query)
+				So(err, ShouldBeNil)
+				So(retrieved.HitSet, ShouldNotBeNil)
+				So(len(retrieved.HitSet.Hits), ShouldEqual, 8777)
+
+				query = &es.Query{
+					Query: &es.QueryFilter{Bool: es.QFBool{Filter: es.Filter{
+						{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
+						bomMatch,
+						{"range": map[string]interface{}{
+							"timestamp": map[string]string{
+								"lte":    "2024-02-05T00:00:04Z",
+								"gte":    "2024-02-05T00:00:00Z",
+								"format": "strict_date_optional_time",
+							},
+						}},
+					}}},
+				}
+
+				retrieved, err = db.Scroll(query)
+				So(err, ShouldBeNil)
+				So(retrieved.HitSet, ShouldNotBeNil)
+				So(len(retrieved.HitSet.Hits), ShouldEqual, 2)
+				sort.Slice(retrieved.HitSet.Hits, func(i, j int) bool {
+					return retrieved.HitSet.Hits[i].Details.Timestamp < retrieved.HitSet.Hits[j].Details.Timestamp
+				})
+
+				stamp = time.Unix(retrieved.HitSet.Hits[0].Details.Timestamp, 0).UTC().Format(time.RFC3339)
+				So(stamp, ShouldEqual, "2024-02-05T00:00:01Z")
+
+				stamp = time.Unix(retrieved.HitSet.Hits[1].Details.Timestamp, 0).UTC().Format(time.RFC3339)
+				So(stamp, ShouldEqual, "2024-02-05T00:00:03Z")
+			})
 		})
 	})
 }
@@ -203,7 +307,7 @@ func makeResult(gte, lte time.Time) *es.Result {
 			uName = "userB"
 		}
 
-		if hits%16 == 0 {
+		if hits%7 == 0 {
 			qName = "gpu-normal"
 		}
 
