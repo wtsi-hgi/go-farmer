@@ -140,6 +140,7 @@ func scrollFlatFile(dbFilePath string, filter *flatFilter, result *es.Result, fi
 	lenBuf := make([]byte, lengthEncodeWidth)
 	detailsBuf := make([]byte, detailsBufferLength)
 	br := bufio.NewReaderSize(f, fileBufferSize)
+	check := filter.PassChecker()
 
 	for {
 		_, err = io.ReadFull(br, tsBuf)
@@ -155,7 +156,7 @@ func scrollFlatFile(dbFilePath string, filter *flatFilter, result *es.Result, fi
 			break
 		}
 
-		check := filter.PassChecker()
+		check.Reset()
 
 		if bytes.Compare(tsBuf, filter.GTEKey) < 0 {
 			check.Fail()

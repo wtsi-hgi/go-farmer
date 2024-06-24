@@ -104,14 +104,25 @@ type passChecker struct {
 	passing bool
 }
 
+// PassChecker returns a new passChecker that can be used in a goroutine to see
+// if values all pass the filter.
 func (f *flatFilter) PassChecker() *passChecker {
 	return &passChecker{filter: f, passing: true}
 }
 
+// Reset should be used at the start of a loop, if re-using a passChecker.
+func (p *passChecker) Reset() {
+	p.passing = true
+}
+
+// Fail will cause Passes() to return false.
 func (p *passChecker) Fail() {
 	p.passing = false
 }
 
+// AccountingName sees if the given accounting name matches the filter's. Does
+// nothing if we're already not passing, or the filter doesn't have an
+// accounting name.
 func (p *passChecker) AccountingName(val []byte) {
 	if !p.passing || !p.filter.checkAccounting {
 		return
@@ -120,6 +131,8 @@ func (p *passChecker) AccountingName(val []byte) {
 	p.passing = bytes.Equal(val, p.filter.accountingName)
 }
 
+// UserName sees if the given user name matches the filter's. Does nothing if
+// we're already not passing, or the filter doesn't have a user name.
 func (p *passChecker) UserName(val []byte) {
 	if !p.passing || !p.filter.checkUser {
 		return
@@ -128,6 +141,9 @@ func (p *passChecker) UserName(val []byte) {
 	p.passing = bytes.Equal(val, p.filter.userName)
 }
 
+// GPU sees if the given value matches the inGPUQueue value. Does nothing if
+// we're already not passing, or the filter doesn't check for GPU queue
+// membership.
 func (p *passChecker) GPU(val byte) {
 	if !p.passing || !p.filter.checkGPU {
 		return
@@ -136,6 +152,8 @@ func (p *passChecker) GPU(val byte) {
 	p.passing = val == inGPUQueue
 }
 
+// Passes returns true if Fail() hasn't been called and none of the filter check
+// methods failed since the last Reset().
 func (p *passChecker) Passes() bool {
 	return p.passing
 }
