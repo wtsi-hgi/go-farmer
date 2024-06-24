@@ -1,23 +1,13 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
-	"encoding/binary"
-	"errors"
 	"fmt"
-	"io"
-	"io/fs"
 	"log"
 	"os"
-	"path/filepath"
-	"runtime"
-	"strings"
-	"sync"
 	"time"
 
-	"github.com/deneonet/benc/bpre"
 	"github.com/wtsi-hgi/go-farmer/cache"
+	"github.com/wtsi-hgi/go-farmer/db"
 	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
 	"gopkg.in/yaml.v3"
 )
@@ -86,26 +76,33 @@ func main() {
 		log.Fatalf("%s\n", err)
 	}
 
-	dbPath := os.Args[2]
+	dbDir := os.Args[2]
 
 	dbExisted := false
 
-	if _, err = os.Stat(dbPath); err == nil {
+	if _, err = os.Stat(dbDir); err == nil {
 		dbExisted = true
 	}
 
+	ldb, err := db.New(dbDir, desiredFlatDBSize, fileBufferSize)
+	if err != nil {
+		log.Fatalf("%s\n", err)
+	}
+
+	defer func() {
+		err = ldb.Close()
+		if err != nil {
+			log.Fatalf("%s\n", err)
+		}
+	}()
+
 	if !dbExisted {
-		err = initDB(dbPath, client)
+		err = initDB(dbDir, client, ldb)
 		if err != nil {
 			log.Fatalf("%s\n", err)
 		}
 
 		return
-	}
-
-	ldb, err := NewLocalDB(dbPath)
-	if err != nil {
-		log.Fatalf("%s\n", err)
 	}
 
 	cq.Scroller = ldb
@@ -270,7 +267,7 @@ func main() {
 	fmt.Printf("took: %s\n\n", time.Since(t))
 }
 
-func initDB(dbPath string, client *es.Client) error {
+func initDB(dbPath string, client *es.Client, db *db.DB) error {
 	lte := "2024-06-10T00:00:00Z"
 	gte := "2024-05-01T00:00:00Z"
 	if testPeriod == 1 {
@@ -307,7 +304,7 @@ func initDB(dbPath string, client *es.Client) error {
 	fmt.Printf("\nsearch took: %s\n", time.Since(t))
 	t = time.Now()
 
-	err = storeInLocalDB(dbPath, result)
+	err = db.Store(result)
 	if err != nil {
 		return err
 	}
@@ -315,501 +312,4 @@ func initDB(dbPath string, client *es.Client) error {
 	fmt.Printf("store took: %s\n", time.Since(t))
 
 	return nil
-}
-
-type FlatDB struct {
-	path  string
-	f     *os.File
-	w     *bufio.Writer
-	n     int64
-	index int
-}
-
-func NewFlatDB(path string) (*FlatDB, error) {
-	f, w, err := createFileAndWriter(path, 0)
-	if err != nil {
-		return nil, err
-	}
-
-	return &FlatDB{
-		path: path,
-		f:    f,
-		w:    w,
-	}, nil
-}
-
-func createFileAndWriter(path string, index int) (*os.File, *bufio.Writer, error) {
-	err := os.MkdirAll(path, dbDirPerms)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	f, err := os.Create(fmt.Sprintf("%s/%d", path, index))
-	if err != nil {
-		return nil, nil, err
-	}
-
-	w := bufio.NewWriterSize(f, fileBufferSize)
-
-	return f, w, nil
-}
-
-func (f *FlatDB) Store(fields ...[]byte) error {
-	total := 0
-
-	for _, field := range fields {
-		n, err := f.w.Write(field)
-		total += n
-
-		if err != nil {
-			return err
-		}
-	}
-
-	f.n += int64(total)
-	if f.n > desiredFlatDBSize {
-		err := f.Close()
-		if err != nil {
-			return err
-		}
-
-		f.index++
-
-		file, w, err := createFileAndWriter(f.path, f.index)
-		if err != nil {
-			return err
-		}
-
-		f.f = file
-		f.w = w
-		f.n = 0
-	}
-
-	return nil
-}
-
-func (f *FlatDB) Close() error {
-	f.w.Flush()
-
-	return f.f.Close()
-}
-
-type LocalDB struct {
-	dir string
-	dbs map[string]*FlatDB
-}
-
-func NewLocalDB(dir string) (*LocalDB, error) {
-	err := os.MkdirAll(dir, dbDirPerms)
-	if err != nil {
-		return nil, err
-	}
-
-	return &LocalDB{
-		dir: dir,
-		dbs: make(map[string]*FlatDB),
-	}, nil
-}
-
-func (l *LocalDB) GetFlatDB(timestamp int64, bom string) (*FlatDB, error) {
-	key := fmt.Sprintf("%s/%s", time.Unix(timestamp, 0).UTC().Format(dateFormat), bom)
-
-	fdb, ok := l.dbs[key]
-	if !ok {
-		var err error
-
-		fdb, err = NewFlatDB(filepath.Join(l.dir, key))
-		if err != nil {
-			return nil, err
-		}
-
-		l.dbs[key] = fdb
-	}
-
-	return fdb, nil
-}
-
-func (l *LocalDB) Close() error {
-	for _, fdb := range l.dbs {
-		if err := fdb.Close(); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func storeInLocalDB(dbPath string, result *es.Result) (err error) {
-	fmt.Printf("storing %d hits\n", len(result.HitSet.Hits))
-
-	ldb, errl := NewLocalDB(dbPath)
-	if errl != nil {
-		return errl
-	}
-
-	defer func() {
-		errc := ldb.Close()
-		if err == nil {
-			err = errc
-		}
-	}()
-
-	bpre.Marshal(detailsBufferLength)
-
-	for _, hit := range result.HitSet.Hits {
-		group, errf := fixedWidthGroup(hit.Details.AccountingName)
-		if errf != nil {
-			err = errf
-			return
-		}
-
-		user, errf := fixedWidthUser(hit.Details.UserName)
-		if errf != nil {
-			err = errf
-			return
-		}
-
-		isGPU := notInGPUQueue
-		if strings.HasPrefix(hit.Details.QueueName, "gpu") {
-			isGPU = inGPUQueue
-		}
-
-		fdb, errl := ldb.GetFlatDB(hit.Details.Timestamp, hit.Details.BOM)
-		if errl != nil {
-			err = errf
-			return
-		}
-
-		encoded, errs := hit.Details.Serialize()
-		if errs != nil {
-			err = errs
-			return
-		}
-
-		errs = fdb.Store(
-			i64tob(hit.Details.Timestamp),
-			group,
-			user,
-			[]byte{isGPU},
-			i32tob(int32(len(encoded))),
-			encoded,
-		)
-		if errs != nil {
-			err = errs
-			return
-		}
-	}
-
-	return
-}
-
-func fixedWidthGroup(group string) ([]byte, error) {
-	return fixedWidthString(group, accountingNameMaxWidth, "ACCOUNTING_NAME")
-}
-
-func fixedWidthString(str string, max int, kind string) ([]byte, error) {
-	padding := max - len(str)
-	if padding < 0 {
-		return nil, errors.New(kind + " too long")
-	}
-
-	return []byte(str + strings.Repeat(" ", padding)), nil
-}
-
-func fixedWidthUser(user string) ([]byte, error) {
-	return fixedWidthString(user, userNameMaxWidth, "USER_NAME")
-}
-
-// i64tob returns an 8-byte big endian representation of v. The result is a
-// sortable byte representation of something like a unix time stamp in seconds.
-func i64tob(v int64) []byte {
-	b := make([]byte, 8)
-	binary.BigEndian.PutUint64(b, uint64(v))
-	return b
-}
-
-func i32tob(v int32) []byte {
-	b := make([]byte, 4)
-	binary.BigEndian.PutUint32(b, uint32(v))
-	return b
-}
-
-func btoi(b []byte) int {
-	return int(binary.BigEndian.Uint32(b[0:4]))
-}
-
-func (l *LocalDB) Scroll(query *es.Query) (*es.Result, error) {
-	return searchLocal(l.dir, query)
-}
-
-type LocalFilter struct {
-	BOM             string
-	LTE             time.Time
-	GTE             time.Time
-	LTEKey          []byte
-	GTEKey          []byte
-	accountingName  []byte
-	userName        []byte
-	checkAccounting bool
-	checkUser       bool
-	checkGPU        bool
-}
-
-func NewLocalFilter(query *es.Query) (*LocalFilter, error) {
-	lte, gte, err := query.DateRange()
-	if err != nil {
-		return nil, err
-	}
-
-	filter := &LocalFilter{
-		LTE: lte,
-		GTE: gte,
-	}
-
-	filter.LTEKey, filter.GTEKey = i64tob(lte.Unix()), i64tob(gte.Unix())
-
-	// lteStamp := time.Unix(btoi64(filter.LTEKey), 0).UTC().Format(time.RFC3339)
-
-	filter.BOM, filter.accountingName, filter.userName, filter.checkGPU = queryToFilters(query)
-
-	if filter.BOM == "" {
-		return nil, errors.New("BOM not specified")
-	}
-
-	filter.checkAccounting = len(filter.accountingName) > 0
-	filter.checkUser = len(filter.userName) > 0
-
-	return filter, nil
-}
-
-func (f *LocalFilter) PassesAccountingName(val []byte) bool {
-	if !f.checkAccounting {
-		return true
-	}
-
-	return bytes.Equal(val, f.accountingName)
-}
-
-func (f *LocalFilter) PassesUserName(val []byte) bool {
-	if !f.checkUser {
-		return true
-	}
-
-	return bytes.Equal(val, f.userName)
-}
-
-func (f *LocalFilter) PassesGPUCheck(val byte) bool {
-	if !f.checkGPU {
-		return true
-	}
-
-	return val == inGPUQueue
-}
-
-func searchLocal(dbPath string, query *es.Query) (*es.Result, error) {
-	dateBOMDirs := make(map[string][]string)
-
-	err := filepath.WalkDir(dbPath, func(path string, d fs.DirEntry, err error) error {
-		if !d.Type().IsRegular() {
-			return nil
-		}
-
-		dir := filepath.Dir(path)
-
-		dateBOMDirs[dir] = append(dateBOMDirs[dir], path)
-
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	filter, err := NewLocalFilter(query)
-	if err != nil {
-		return nil, err
-	}
-
-	errCh := make(chan error)
-	result := &es.Result{
-		HitSet: &es.HitSet{},
-	}
-
-	errsDoneCh := make(chan struct{})
-	go func() {
-		for err := range errCh {
-			fmt.Printf("error: %s\n", err)
-		}
-
-		close(errsDoneCh)
-	}()
-
-	var wg sync.WaitGroup
-
-	currentDay := filter.GTE
-
-	for {
-		fileKey := currentDay.UTC().Format(dateFormat)
-		paths := dateBOMDirs[fmt.Sprintf("%s/%s/%s", dbPath, fileKey, filter.BOM)]
-
-		for _, path := range paths {
-			wg.Add(1)
-			go func(dbFilePath string) {
-				defer wg.Done()
-
-				searchLocalFile(dbFilePath, filter, result.HitSet, errCh)
-			}(path)
-		}
-
-		currentDay = currentDay.Add(24 * time.Hour)
-		if currentDay.After(filter.LTE) {
-			break
-		}
-	}
-
-	wg.Wait()
-	close(errCh)
-	<-errsDoneCh
-
-	return result, nil
-}
-
-func searchLocalFile(dbFilePath string, filter *LocalFilter, hitset *es.HitSet, errCh chan error) {
-	f, err := os.Open(dbFilePath)
-	if err != nil {
-		errCh <- err
-
-		return
-	}
-
-	tsBuf := make([]byte, timeStampLength)
-	accBuf := make([]byte, accountingNameMaxWidth)
-	userBuf := make([]byte, userNameMaxWidth)
-	lenBuf := make([]byte, lengthEncodeLength)
-	detailsBuf := make([]byte, detailsBufferLength)
-
-	br := bufio.NewReaderSize(f, fileBufferSize)
-
-	t := time.Now()
-	total := 0
-	numGoroutines := runtime.NumGoroutine()
-
-	for {
-		total++
-
-		_, err = io.ReadFull(br, tsBuf)
-		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				errCh <- err
-
-				return
-			}
-
-			break
-		}
-
-		if bytes.Compare(tsBuf, filter.LTEKey) > 0 {
-			break
-		}
-
-		var passesFilter bool
-
-		if bytes.Compare(tsBuf, filter.GTEKey) >= 0 {
-			passesFilter = true
-		}
-
-		_, err = io.ReadFull(br, accBuf)
-		if err != nil {
-			errCh <- err
-
-			return
-		}
-
-		if passesFilter && !filter.PassesAccountingName(accBuf) {
-			passesFilter = false
-		}
-
-		_, err = io.ReadFull(br, userBuf)
-		if err != nil {
-			errCh <- err
-
-			return
-		}
-
-		if passesFilter && !filter.PassesUserName(userBuf) {
-			passesFilter = false
-		}
-
-		gpuByte, err := br.ReadByte()
-		if err != nil {
-			errCh <- err
-
-			return
-		}
-
-		if passesFilter && !filter.PassesGPUCheck(gpuByte) {
-			passesFilter = false
-		}
-
-		_, err = io.ReadFull(br, lenBuf)
-		if err != nil {
-			errCh <- err
-
-			return
-		}
-
-		detailsLength := btoi(lenBuf)
-
-		buf := detailsBuf[0:detailsLength]
-
-		_, err = io.ReadFull(br, buf)
-		if err != nil {
-			errCh <- err
-
-			return
-		}
-
-		if passesFilter {
-			d, err := es.DeserializeDetails(buf)
-			if err != nil {
-				errCh <- err
-
-				return
-			}
-
-			hitset.AddHit("", d)
-		}
-	}
-
-	if debug {
-		fmt.Printf("%s took %s for %d hits, starting with %d goroutines\n", dbFilePath, time.Since(t), total, numGoroutines)
-	}
-
-	f.Close()
-}
-
-func queryToFilters(query *es.Query) (bom string, accountingName, userName []byte, checkGPU bool) {
-	filters := query.Filters()
-
-	bom = filters["BOM"]
-
-	aname, ok := filters["ACCOUNTING_NAME"]
-	if ok {
-		if b, err := fixedWidthGroup(aname); err == nil {
-			accountingName = b
-		}
-	}
-
-	uname, ok := filters["USER_NAME"]
-	if ok {
-		if b, err := fixedWidthUser(uname); err == nil {
-			userName = b
-		}
-	}
-
-	qname, ok := filters["QUEUE_NAME"]
-	if ok && strings.HasPrefix(qname, "gpu") {
-		checkGPU = true
-	}
-
-	return
 }
