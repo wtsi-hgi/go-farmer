@@ -97,7 +97,7 @@ func main() {
 	}()
 
 	if !dbExisted {
-		err = initDB(dbDir, client, ldb)
+		err = initDB(cq, ldb)
 		if err != nil {
 			log.Fatalf("%s\n", err)
 		}
@@ -267,7 +267,7 @@ func main() {
 	fmt.Printf("took: %s\n\n", time.Since(t))
 }
 
-func initDB(dbPath string, client *es.Client, db *db.DB) error {
+func initDB(cq *cache.CachedQuerier, db *db.DB) error {
 	lte := "2024-06-10T00:00:00Z"
 	gte := "2024-05-01T00:00:00Z"
 	if testPeriod == 1 {
@@ -296,7 +296,7 @@ func initDB(dbPath string, client *es.Client, db *db.DB) error {
 
 	t := time.Now()
 
-	result, err := client.Scroll(query)
+	result, err := cq.Scroll(query)
 	if err != nil {
 		return err
 	}
