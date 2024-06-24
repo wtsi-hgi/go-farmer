@@ -72,8 +72,8 @@ func New(sc SearchScroller) *Server {
 	return s
 }
 
-// ServeHTTP handles search requests using real elasticsearch or our local
-// database for scroll searches. Everything else just returns OK.
+// ServeHTTP handles search requests using our SearchScroller. Everything else
+// just returns OK.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
 }
