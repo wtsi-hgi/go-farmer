@@ -44,7 +44,7 @@ import (
 const (
 	ErrNoTimestampRange = "no timestamp range found"
 	MaxSize             = 10000
-	searchPage          = "_search"
+	SearchPage          = "_search"
 )
 
 // Query describes the search query you wish to run against Elastic Search.
@@ -143,7 +143,7 @@ func NewQuery(req *http.Request) (*Query, bool) {
 	}
 
 	path := filepath.Base(req.URL.Path)
-	if path != searchPage {
+	if path != SearchPage {
 		return nil, false
 	}
 
