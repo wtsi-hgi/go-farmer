@@ -82,7 +82,7 @@ type ElasticInfo struct {
 	}
 }
 
-// Info tells you the version number number info of the server.
+// Info tells you the version number info of the server.
 func (c *Client) Info() (*ElasticInfo, error) {
 	resp, err := c.client.Info()
 	if err != nil {
