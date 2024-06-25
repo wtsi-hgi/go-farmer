@@ -23,12 +23,57 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  ******************************************************************************/
 
-package main
+package cmd
 
 import (
-	"github.com/wtsi-hgi/go-farmer/cmd"
+	"os"
+
+	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
+	"gopkg.in/yaml.v3"
 )
 
-func main() {
-	cmd.Execute()
+type YAMLConfig struct {
+	Elastic struct {
+		Host     string
+		Username string
+		Password string
+		Scheme   string
+		Port     int
+	}
+	Farmer struct {
+		Host         string
+		Scheme       string
+		Port         string
+		Index        string
+		DatabaseDir  string `yaml:"database_dir"`
+		FileSize     int    `yaml:"file_size"`
+		BufferSize   int    `yaml:"buffer_size"`
+		CacheEntries int    `yaml:"cache_entries"`
+	}
+}
+
+func ParseConfig(path string) *YAMLConfig {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		die("missing config file: %s", err)
+	}
+
+	c := &YAMLConfig{}
+
+	err = yaml.Unmarshal(data, &c)
+	if err != nil {
+		die("invalid config file: %s", err)
+	}
+
+	return c
+}
+
+func (c *YAMLConfig) ToESConfig() es.Config {
+	return es.Config{
+		Host:     c.Elastic.Host,
+		Port:     c.Elastic.Port,
+		Scheme:   c.Elastic.Scheme,
+		Username: c.Elastic.Username,
+		Password: c.Elastic.Password,
+	}
 }
