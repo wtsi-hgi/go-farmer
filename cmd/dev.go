@@ -55,11 +55,7 @@ Optionally supply -p month to query 1 month of data, or -p days for 3 days.
 Default is -p mins for 10 minutes of data.
 `,
 	Run: func(_ *cobra.Command, _ []string) {
-		if configPath == "" {
-			die("you must supply a config file with -c")
-		}
-
-		config := ParseConfig(configPath)
+		config := ParseConfig()
 
 		period := 0
 		switch demoPeriod {
@@ -93,7 +89,7 @@ func demo(config *YAMLConfig, period int, debug bool) {
 		die("failed to create real elasticsearch client: %s", err)
 	}
 
-	cq, err := cache.New(client, client, config.Farmer.CacheEntries)
+	cq, err := cache.New(client, client, config.CacheEntries())
 	if err != nil {
 		die("failed to create an LRU cache: %s", err)
 	}
@@ -106,7 +102,7 @@ func demo(config *YAMLConfig, period int, debug bool) {
 		dbExisted = true
 	}
 
-	ldb, err := db.New(dbDir, config.Farmer.FileSize, config.Farmer.BufferSize)
+	ldb, err := db.New(dbDir, config.FileSize(), config.BufferSize())
 	if err != nil {
 		die("failed to open local database: %s", err)
 	}

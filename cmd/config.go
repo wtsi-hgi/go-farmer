@@ -32,6 +32,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	defaultFileSize     = 32 * 1024 * 1024
+	defaultBufferSize   = 4 * 1024 * 1024
+	defaultCacheEntries = 128
+)
+
 type YAMLConfig struct {
 	Elastic struct {
 		Host     string
@@ -41,19 +47,22 @@ type YAMLConfig struct {
 		Port     int
 	}
 	Farmer struct {
-		Host         string
-		Scheme       string
-		Port         string
-		Index        string
-		DatabaseDir  string `yaml:"database_dir"`
-		FileSize     int    `yaml:"file_size"`
-		BufferSize   int    `yaml:"buffer_size"`
-		CacheEntries int    `yaml:"cache_entries"`
+		Host            string
+		Port            string
+		Index           string
+		DatabaseDir     string `yaml:"database_dir"`
+		RawFileSize     int    `yaml:"file_size"`
+		RawBufferSize   int    `yaml:"buffer_size"`
+		RawCacheEntries int    `yaml:"cache_entries"`
 	}
 }
 
-func ParseConfig(path string) *YAMLConfig {
-	data, err := os.ReadFile(path)
+func ParseConfig() *YAMLConfig {
+	if configPath == "" {
+		die("you must supply a config file with -c")
+	}
+
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		die("missing config file: %s", err)
 	}
@@ -76,4 +85,28 @@ func (c *YAMLConfig) ToESConfig() es.Config {
 		Username: c.Elastic.Username,
 		Password: c.Elastic.Password,
 	}
+}
+
+func (c *YAMLConfig) FileSize() int {
+	if c.Farmer.RawFileSize > 0 {
+		return c.Farmer.RawFileSize
+	}
+
+	return defaultFileSize
+}
+
+func (c *YAMLConfig) BufferSize() int {
+	if c.Farmer.RawBufferSize > 0 {
+		return c.Farmer.RawBufferSize
+	}
+
+	return defaultBufferSize
+}
+
+func (c *YAMLConfig) CacheEntries() int {
+	if c.Farmer.RawCacheEntries > 0 {
+		return c.Farmer.RawCacheEntries
+	}
+
+	return defaultCacheEntries
 }

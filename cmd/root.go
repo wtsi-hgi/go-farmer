@@ -74,8 +74,7 @@ elastic:
   port: 19200
 farmer:
   host: "localhost"
-  scheme: "http"
-  port: 19200
+  port: 19201
   index: "elasticsearchindex-*"
   database_dir: "/path/to/local/database_dir"
   file_size: 33554432
@@ -88,7 +87,7 @@ read buffer size when creating/parsing those files. The default values for these
 are given in the example above (32MB and 4MB respectively).
 
 cache_entries is the number of query results that will be stored in an in-memory
-LRU cache.
+LRU cache. Defaults to 128.
 
 index will be the index supplied to the real elasticsearch when doing search and
 scroll queries.

@@ -11,6 +11,7 @@ require (
 	github.com/inconshreveable/log15 v2.16.0+incompatible
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.2.1
+	gopkg.in/tylerb/graceful.v1 v1.2.15
 	gopkg.in/yaml.v3 v3.0.1
 )
 
