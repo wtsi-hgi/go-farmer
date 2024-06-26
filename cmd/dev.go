@@ -130,7 +130,7 @@ func demo(config *YAMLConfig, period int, debug bool) {
 	bomQuery := &es.Query{
 		Aggs: &es.Aggs{
 			Stats: es.AggsStats{
-				MultiTerms: es.MultiTerms{
+				MultiTerms: &es.MultiTerms{
 					Terms: []es.Field{
 						{Field: "ACCOUNTING_NAME"},
 						{Field: "NUM_EXEC_PROCS"},

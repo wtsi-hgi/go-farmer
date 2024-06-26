@@ -128,7 +128,7 @@ func (f *flatDB) Close() error {
 	return f.f.Close()
 }
 
-func scrollFlatFile(dbFilePath string, filter *flatFilter, result *es.Result, fileBufferSize int) error { //nolint:funlen,gocognit,gocyclo,cyclop,lll
+func scrollFlatFile(dbFilePath string, filter *flatFilter, result *es.Result, fields []string, fileBufferSize int) error { //nolint:funlen,gocognit,gocyclo,cyclop,lll
 	f, err := os.Open(dbFilePath)
 	if err != nil {
 		return err
@@ -198,7 +198,7 @@ func scrollFlatFile(dbFilePath string, filter *flatFilter, result *es.Result, fi
 		}
 
 		if check.Passes() {
-			d, err := es.DeserializeDetails(buf)
+			d, err := es.DeserializeDetails(buf, fields)
 			if err != nil {
 				return err
 			}

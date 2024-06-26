@@ -26,10 +26,12 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -37,26 +39,43 @@ import (
 	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
 )
 
+type mockRealServer struct {
+}
+
+func (m *mockRealServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Write([]byte("a real elasticsearch response")) //nolint:errcheck
+}
+
 func TestServer(t *testing.T) {
 	Convey("Given a server", t, func() {
-		url := "http://host:1234/"
+		urlStr := "http://host:1234/"
+		index := "some-indexes-*"
 
-		mock := es.NewMock()
-		server := New(mock.Client())
+		mockReal := httptest.NewServer(&mockRealServer{})
+		defer mockReal.Close()
 
-		Convey("and non-search requests, server returns OK", func() {
-			req := httptest.NewRequest(http.MethodGet, url, nil)
+		mock := es.NewMock(index)
+		server := New(mock.Client(), index, &url.URL{Host: strings.TrimPrefix(mockReal.URL, "http://"), Scheme: "http"})
+
+		Convey("and non-search requests, server acts as a proxy to the 'real' elasticsearch server", func() {
+			req := httptest.NewRequest(http.MethodGet, urlStr, nil)
 			w := httptest.NewRecorder()
 
 			server.ServeHTTP(w, req)
 
 			resp := w.Result()
 			So(resp.StatusCode, ShouldEqual, http.StatusOK)
+
+			var content bytes.Buffer
+
+			_, err := content.ReadFrom(resp.Body)
+			So(err, ShouldBeNil)
+			So(content.String(), ShouldEqual, "a real elasticsearch response")
 		})
 
 		Convey("and an invalid search request, server returns Bad Request", func() {
-			url += es.SearchPage
-			req := httptest.NewRequest(http.MethodPost, url, nil)
+			urlStr += "some-indexes-%2A/" + es.SearchPage
+			req := httptest.NewRequest(http.MethodPost, urlStr, nil)
 			w := httptest.NewRecorder()
 
 			server.ServeHTTP(w, req)
@@ -64,7 +83,7 @@ func TestServer(t *testing.T) {
 			resp := w.Result()
 			So(resp.StatusCode, ShouldEqual, http.StatusBadRequest)
 
-			req = httptest.NewRequest(http.MethodGet, url, strings.NewReader(`{}`))
+			req = httptest.NewRequest(http.MethodGet, urlStr, strings.NewReader(`{}`))
 			w = httptest.NewRecorder()
 
 			server.ServeHTTP(w, req)
@@ -86,7 +105,7 @@ func TestServer(t *testing.T) {
 
 			data, err := io.ReadAll(resp.Body)
 			So(err, ShouldBeNil)
-			So(len(data), ShouldEqual, 1133)
+			So(len(data), ShouldEqual, 241)
 
 			result := &es.Result{}
 			err = json.Unmarshal(data, result)
@@ -110,7 +129,7 @@ func TestServer(t *testing.T) {
 			err := dec.Decode(result)
 			So(err, ShouldBeNil)
 
-			So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 0)
+			So(result.Aggregations, ShouldBeNil)
 			So(len(result.HitSet.Hits), ShouldEqual, 10000)
 
 			req, expectedNumHits := mock.ScrollQuery("?scroll=1m")
@@ -126,7 +145,7 @@ func TestServer(t *testing.T) {
 			err = dec.Decode(result)
 			So(err, ShouldBeNil)
 
-			So(len(result.Aggregations.Stats.Buckets), ShouldEqual, 0)
+			So(result.Aggregations, ShouldBeNil)
 			So(len(result.HitSet.Hits), ShouldEqual, expectedNumHits)
 		})
 	})

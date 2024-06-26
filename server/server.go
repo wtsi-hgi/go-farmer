@@ -29,6 +29,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 
 	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
 )
@@ -53,21 +55,28 @@ type Server struct {
 // New returns a Server, which is an http.Handler.
 //
 // It takes SearchScroller, such as a CachedQuerier, which will be used to get
-// the results of requested searches.
+// the results of requested searches. Searh requests are those sent to
+// "/index/_search".
+//
+// It takes proxyTarget, which should be the URL of the real elasticsearch
+// server, for which we will become a transparent proxy for all non-search
+// requests.
 //
 // To start a webserver, do something like:
 //
-//	s := New()
+//	s := New(sc, &url.URL{Host: "domain:port", Scheme: "http"})
 //	http.ListenAndServe(80, s)
-func New(sc SearchScroller) *Server {
+func New(sc SearchScroller, index string, proxyTarget *url.URL) *Server {
+	proxy := httputil.NewSingleHostReverseProxy(proxyTarget)
+
 	mux := http.NewServeMux()
 	s := &Server{
 		mux: mux,
 		sc:  sc,
 	}
 
-	mux.HandleFunc(root+es.SearchPage, s.search)
-	mux.HandleFunc(root, s.nonSearch)
+	mux.HandleFunc(root+url.QueryEscape(index)+"/"+es.SearchPage, s.search)
+	mux.Handle(root, proxy)
 
 	return s
 }
@@ -76,10 +85,6 @@ func New(sc SearchScroller) *Server {
 // just returns OK.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
-}
-
-func (s *Server) nonSearch(w http.ResponseWriter, _ *http.Request) {
-	sendMessageToClient(w, "non-search request ignored")
 }
 
 func sendMessageToClient(w http.ResponseWriter, msg string) {

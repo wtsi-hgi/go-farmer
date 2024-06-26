@@ -63,8 +63,9 @@ type Aggs struct {
 }
 
 type AggsStats struct {
-	MultiTerms MultiTerms           `json:"multi_terms"`
-	Aggs       map[string]AggsField `json:"aggs"`
+	MultiTerms *MultiTerms          `json:"multi_terms,omitempty"`
+	Terms      *Field               `json:"terms,omitempty"`
+	Aggs       map[string]AggsField `json:"aggs,omitempty"`
 }
 
 type MultiTerms struct {
@@ -74,6 +75,7 @@ type MultiTerms struct {
 
 type Field struct {
 	Field string `json:"field"`
+	Size  int    `json:"size,omitempty"`
 }
 
 type AggsField struct {

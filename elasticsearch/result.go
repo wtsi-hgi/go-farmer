@@ -55,11 +55,11 @@ const ErrFailedQuery = "elasticsearch query failed"
 
 // Result holds the results of a search query.
 type Result struct {
-	ScrollID     string `json:"_scroll_id"`
-	Took         int
-	TimedOut     bool    `json:"timed_out"`
-	HitSet       *HitSet `json:"hits"`
-	Aggregations Aggregations
+	ScrollID     string        `json:"_scroll_id,omitempty"`
+	Took         int           `json:"took"`
+	TimedOut     bool          `json:"timed_out"`
+	HitSet       *HitSet       `json:"hits"`
+	Aggregations *Aggregations `json:"aggregations,omitempty"`
 	errors       []error
 	mu           sync.Mutex
 }
@@ -106,13 +106,13 @@ func (r *Result) Errors() []error {
 // HitSet is the container of all Hits, plus a Total.Value which may tell you
 // the total number of matching documents.
 type HitSet struct {
-	Total HitSetTotal
-	Hits  []Hit
+	Total HitSetTotal `json:"total"`
+	Hits  []Hit       `json:"hits"`
 	mu    sync.Mutex
 }
 
 type HitSetTotal struct {
-	Value int
+	Value int `json:"value"`
 }
 
 // AddHit can be used if constructing your own Hits manually. It is thread safe.
@@ -124,10 +124,12 @@ func (h *HitSet) AddHit(id string, details *Details) {
 		ID:      id,
 		Details: details,
 	})
+
+	h.Total.Value++
 }
 
 type Hit struct {
-	ID      string   `json:"_id"`
+	ID      string   `json:"_id,omitempty"`
 	Details *Details `json:"_source"`
 }
 
@@ -225,91 +227,182 @@ func (d *Details) Serialize() ([]byte, error) { //nolint:funlen,misspell
 }
 
 // DeserializeDetails takes the output of Details.Serialize and converts it
-// back in to a Details.
-func DeserializeDetails(encoded []byte) (*Details, error) { //nolint:funlen,gocognit,gocyclo,cyclop
+// back in to a Details. If desiredFields is not an empty slice, only the given
+// fields (expressed as their JSON names) will be unmarshalled.
+func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error) { //nolint:funlen,gocognit,gocyclo,cyclop,maintidx,lll
 	details := &Details{}
 
 	var (
-		n   int //nolint:varnamelen
-		err error
+		n       int //nolint:varnamelen
+		err     error
+		doField map[string]bool
 	)
 
-	n, details.AccountingName, err = bstd.UnmarshalString(0, encoded)
+	doAllFields := len(desiredFields) == 0
+
+	if !doAllFields {
+		doField = make(map[string]bool, len(desiredFields))
+
+		for _, field := range desiredFields {
+			doField[field] = true
+		}
+	}
+
+	if doAllFields || doField["ACCOUNTING_NAME"] {
+		n, details.AccountingName, err = bstd.UnmarshalString(0, encoded)
+	} else {
+		n, err = bstd.SkipString(0, encoded)
+	}
+
 	if err != nil {
 		return nil, err
 	}
 
-	n, details.AvailCPUTimeSec, err = bstd.UnmarshalInt(n, encoded)
+	if doAllFields || doField["AVAIL_CPU_TIME_SEC"] {
+		n, details.AvailCPUTimeSec, err = bstd.UnmarshalInt(n, encoded)
+	} else {
+		n, err = bstd.SkipInt(n, encoded)
+	}
+
 	if err != nil {
 		return nil, err
 	}
 
-	n, details.BOM, err = bstd.UnmarshalString(n, encoded)
+	if doAllFields || doField["BOM"] {
+		n, details.BOM, err = bstd.UnmarshalString(n, encoded)
+	} else {
+		n, err = bstd.SkipString(n, encoded)
+	}
+
 	if err != nil {
 		return nil, err
 	}
 
-	n, details.Command, err = bstd.UnmarshalString(n, encoded)
+	if doAllFields || doField["Command"] {
+		n, details.Command, err = bstd.UnmarshalString(n, encoded)
+	} else {
+		n, err = bstd.SkipString(n, encoded)
+	}
+
 	if err != nil {
 		return nil, err
 	}
 
-	n, details.JobName, err = bstd.UnmarshalString(n, encoded)
+	if doAllFields || doField["JOB_NAME"] {
+		n, details.JobName, err = bstd.UnmarshalString(n, encoded)
+	} else {
+		n, err = bstd.SkipString(n, encoded)
+	}
+
 	if err != nil {
 		return nil, err
 	}
 
-	n, details.Job, err = bstd.UnmarshalString(n, encoded)
+	if doAllFields || doField["Job"] {
+		n, details.Job, err = bstd.UnmarshalString(n, encoded)
+	} else {
+		n, err = bstd.SkipString(n, encoded)
+	}
 	if err != nil {
 		return nil, err
 	}
 
-	n, details.MemRequestedMB, err = bstd.UnmarshalInt(n, encoded)
+	if doAllFields || doField["MEM_REQUESTED_MB"] {
+		n, details.MemRequestedMB, err = bstd.UnmarshalInt(n, encoded)
+	} else {
+		n, err = bstd.SkipInt(n, encoded)
+	}
+
 	if err != nil {
 		return nil, err
 	}
 
-	n, details.MemRequestedMBSec, err = bstd.UnmarshalInt(n, encoded)
+	if doAllFields || doField["MEM_REQUESTED_MB_SEC"] {
+		n, details.MemRequestedMBSec, err = bstd.UnmarshalInt(n, encoded)
+	} else {
+		n, err = bstd.SkipInt(n, encoded)
+	}
+
 	if err != nil {
 		return nil, err
 	}
 
-	n, details.NumExecProcs, err = bstd.UnmarshalInt(n, encoded)
+	if doAllFields || doField["NUM_EXEC_PROCS"] {
+		n, details.NumExecProcs, err = bstd.UnmarshalInt(n, encoded)
+	} else {
+		n, err = bstd.SkipInt(n, encoded)
+	}
+
 	if err != nil {
 		return nil, err
 	}
 
-	n, details.PendingTimeSec, err = bstd.UnmarshalInt(n, encoded)
+	if doAllFields || doField["PENDING_TIME_SEC"] {
+		n, details.PendingTimeSec, err = bstd.UnmarshalInt(n, encoded)
+	} else {
+		n, err = bstd.SkipInt(n, encoded)
+	}
+
 	if err != nil {
 		return nil, err
 	}
 
-	n, details.QueueName, err = bstd.UnmarshalString(n, encoded)
+	if doAllFields || doField["QUEUE_NAME"] {
+		n, details.QueueName, err = bstd.UnmarshalString(n, encoded)
+	} else {
+		n, err = bstd.SkipString(n, encoded)
+	}
+
 	if err != nil {
 		return nil, err
 	}
 
-	n, details.RunTimeSec, err = bstd.UnmarshalInt(n, encoded)
+	if doAllFields || doField["RUN_TIME_SEC"] {
+		n, details.RunTimeSec, err = bstd.UnmarshalInt(n, encoded)
+	} else {
+		n, err = bstd.SkipInt(n, encoded)
+	}
+
 	if err != nil {
 		return nil, err
 	}
 
-	n, details.Timestamp, err = bstd.UnmarshalInt64(n, encoded)
+	if doAllFields || doField["timestamp"] {
+		n, details.Timestamp, err = bstd.UnmarshalInt64(n, encoded)
+	} else {
+		n, err = bstd.SkipInt64(n, encoded)
+	}
+
 	if err != nil {
 		return nil, err
 	}
 
-	n, details.UserName, err = bstd.UnmarshalString(n, encoded)
+	if doAllFields || doField["USER_NAME"] {
+		n, details.UserName, err = bstd.UnmarshalString(n, encoded)
+	} else {
+		n, err = bstd.SkipString(n, encoded)
+	}
+
 	if err != nil {
 		return nil, err
 	}
 
-	n, details.WastedCPUSeconds, err = bstd.UnmarshalFloat64(n, encoded)
+	if doAllFields || doField["WASTED_CPU_SECONDS"] {
+		n, details.WastedCPUSeconds, err = bstd.UnmarshalFloat64(n, encoded)
+	} else {
+		n, err = bstd.SkipFloat64(n, encoded)
+	}
+
 	if err != nil {
 		return nil, err
 	}
 
-	n, details.WastedMBSeconds, err = bstd.UnmarshalFloat64(n, encoded)
+	if doAllFields || doField["WASTED_MB_SECONDS"] {
+		n, details.WastedMBSeconds, err = bstd.UnmarshalFloat64(n, encoded)
+	} else {
+		n, err = bstd.SkipFloat64(n, encoded)
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -320,20 +413,11 @@ func DeserializeDetails(encoded []byte) (*Details, error) { //nolint:funlen,goco
 }
 
 type Aggregations struct {
-	Stats struct {
-		Buckets []struct {
-			Key          string      `json:"key_as_string"`
-			CPUAvailSec  BucketValue `json:"cpu_avail_sec"`
-			MemAvailSec  BucketValue `json:"mem_avail_mb_sec"`
-			CPUWastedSec BucketValue `json:"cpu_wasted_sec"`
-			MemWastedSec BucketValue `json:"mem_wasted_mb_sec"`
-			WastedCost   BucketValue `json:"wasted_cost"`
-		}
-	}
+	Stats *Buckets `json:"stats,omitempty"`
 }
 
-type BucketValue struct {
-	Value float64
+type Buckets struct {
+	Buckets []interface{} `json:"buckets,omitempty"`
 }
 
 func parseResultResponse(resp *esapi.Response) (*Result, error) {

@@ -26,7 +26,10 @@
 package cmd
 
 import (
+	"net"
+	"net/url"
 	"os"
+	"strconv"
 
 	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
 	"gopkg.in/yaml.v3"
@@ -49,7 +52,7 @@ type YAMLConfig struct {
 	}
 	Farmer struct {
 		Host            string
-		Port            string
+		Port            int
 		DatabaseDir     string `yaml:"database_dir"`
 		RawFileSize     int    `yaml:"file_size"`
 		RawBufferSize   int    `yaml:"buffer_size"`
@@ -110,4 +113,15 @@ func (c *YAMLConfig) CacheEntries() int {
 	}
 
 	return defaultCacheEntries
+}
+
+func (c *YAMLConfig) ElasticURL() *url.URL {
+	return &url.URL{
+		Host:   net.JoinHostPort(c.Elastic.Host, strconv.Itoa(c.Elastic.Port)),
+		Scheme: c.Elastic.Scheme,
+	}
+}
+
+func (c *YAMLConfig) FarmerHostPort() string {
+	return net.JoinHostPort(c.Farmer.Host, strconv.Itoa(c.Farmer.Port))
 }

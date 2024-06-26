@@ -245,7 +245,7 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 
 	var wg sync.WaitGroup
 
-	d.scrollRequestedDays(&wg, filter, result)
+	d.scrollRequestedDays(&wg, filter, result, query.Source)
 
 	wg.Wait()
 
@@ -257,7 +257,7 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 	return result, nil
 }
 
-func (d *DB) scrollRequestedDays(wg *sync.WaitGroup, filter *flatFilter, result *es.Result) {
+func (d *DB) scrollRequestedDays(wg *sync.WaitGroup, filter *flatFilter, result *es.Result, fields []string) {
 	currentDay := filter.GTE
 
 	for {
@@ -270,7 +270,7 @@ func (d *DB) scrollRequestedDays(wg *sync.WaitGroup, filter *flatFilter, result 
 			go func(dbFilePath string) {
 				defer wg.Done()
 
-				if err := scrollFlatFile(dbFilePath, filter, result, d.bufferSize); err != nil {
+				if err := scrollFlatFile(dbFilePath, filter, result, fields, d.bufferSize); err != nil {
 					result.AddError(err)
 				}
 			}(path)

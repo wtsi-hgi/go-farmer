@@ -149,7 +149,7 @@ func TestDB(t *testing.T) {
 
 			nextFieldStart += lengthEncodeWidth
 			detailsBytes := b[nextFieldStart : nextFieldStart+detailsLen]
-			details, err := es.DeserializeDetails(detailsBytes)
+			details, err := es.DeserializeDetails(detailsBytes, []string{})
 			So(err, ShouldBeNil)
 
 			timeStamp, err := time.Parse(time.RFC3339, "2024-02-04T00:00:01Z")
@@ -173,7 +173,7 @@ func TestDB(t *testing.T) {
 
 			nextFieldStart = len(b) - expectedDetailsLen
 			detailsBytes = b[nextFieldStart:]
-			details, err = es.DeserializeDetails(detailsBytes)
+			details, err = es.DeserializeDetails(detailsBytes, []string{})
 			So(err, ShouldBeNil)
 			So(details, ShouldResemble, result.HitSet.Hits[expectedNumHits-1].Details)
 
@@ -260,6 +260,7 @@ func TestDB(t *testing.T) {
 							},
 						}},
 					}}},
+					Source: []string{"USER_NAME", "timestamp"},
 				}
 
 				retrieved, err = db.Scroll(query)
@@ -274,7 +275,9 @@ func TestDB(t *testing.T) {
 				So(stamp, ShouldEqual, "2024-02-05T00:00:01Z")
 
 				stamp = time.Unix(retrieved.HitSet.Hits[1].Details.Timestamp, 0).UTC().Format(time.RFC3339)
-				So(stamp, ShouldEqual, "2024-02-05T00:00:03Z")
+
+				So(retrieved.HitSet.Hits[0].Details.UserName, ShouldNotBeBlank)
+				So(retrieved.HitSet.Hits[0].Details.AccountingName, ShouldBeBlank)
 			})
 		})
 	})

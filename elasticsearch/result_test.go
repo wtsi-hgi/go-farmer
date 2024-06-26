@@ -58,7 +58,7 @@ func TestDetails(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(len(detailBytes), ShouldEqual, 117)
 
-		recovered, err := DeserializeDetails(detailBytes)
+		recovered, err := DeserializeDetails(detailBytes, []string{})
 		So(err, ShouldBeNil)
 		So(recovered, ShouldResemble, details)
 
@@ -85,9 +85,94 @@ func TestDetails(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(len(detailBytes), ShouldEqual, 112)
 
-		recovered, err = DeserializeDetails(detailBytes)
+		recovered, err = DeserializeDetails(detailBytes, []string{})
 		So(err, ShouldBeNil)
 		So(recovered, ShouldResemble, details)
+
+		recovered, err = DeserializeDetails(detailBytes, []string{"ACCOUNTING_NAME"})
+		So(err, ShouldBeNil)
+		So(recovered, ShouldResemble, &Details{AccountingName: "aname"})
+
+		// AccountingName  string `json:"ACCOUNTING_NAME,omitempty"`
+		// AvailCPUTimeSec int    `json:"AVAIL_CPU_TIME_SEC,omitempty"`
+		// BOM string `json:",omitempty"`
+		// Command string `json:",omitempty"`
+		// JobName string `json:"JOB_NAME,omitempty"`
+		// Job     string `json:",omitempty"`
+		// MemRequestedMB    int `json:"MEM_REQUESTED_MB,omitempty"`
+		// MemRequestedMBSec int `json:"MEM_REQUESTED_MB_SEC,omitempty"`
+		// NumExecProcs      int `json:"NUM_EXEC_PROCS,omitempty"`
+		// PendingTimeSec int `json:"PENDING_TIME_SEC,omitempty"`
+		// QueueName string `json:"QUEUE_NAME,omitempty"`
+		// RunTimeSec int `json:"RUN_TIME_SEC,omitempty"`
+		// Timestamp        int64   `json:"timestamp,omitempty"`
+		// UserName         string  `json:"USER_NAME,omitempty"`
+		// WastedCPUSeconds float64 `json:"WASTED_CPU_SECONDS,omitempty"`
+		// WastedMBSeconds  float64 `json:"WASTED_MB_SECONDS,omitempty"`
+
+		recovered, err = DeserializeDetails(detailBytes, []string{"AVAIL_CPU_TIME_SEC"})
+		So(err, ShouldBeNil)
+		So(recovered, ShouldResemble, &Details{AvailCPUTimeSec: 0})
+
+		recovered, err = DeserializeDetails(detailBytes, []string{"BOM"})
+		So(err, ShouldBeNil)
+		So(recovered, ShouldResemble, &Details{BOM: "bname"})
+
+		recovered, err = DeserializeDetails(detailBytes, []string{"Command"})
+		So(err, ShouldBeNil)
+		So(recovered, ShouldResemble, &Details{Command: "cmd"})
+
+		recovered, err = DeserializeDetails(detailBytes, []string{"JOB_NAME"})
+		So(err, ShouldBeNil)
+		So(recovered, ShouldResemble, &Details{JobName: ""})
+
+		recovered, err = DeserializeDetails(detailBytes, []string{"Job"})
+		So(err, ShouldBeNil)
+		So(recovered, ShouldResemble, &Details{Job: "job"})
+
+		recovered, err = DeserializeDetails(detailBytes, []string{"MEM_REQUESTED_MB"})
+		So(err, ShouldBeNil)
+		So(recovered, ShouldResemble, &Details{MemRequestedMB: 1})
+
+		recovered, err = DeserializeDetails(detailBytes, []string{"MEM_REQUESTED_MB_SEC"})
+		So(err, ShouldBeNil)
+		So(recovered, ShouldResemble, &Details{MemRequestedMBSec: 2})
+
+		recovered, err = DeserializeDetails(detailBytes, []string{"NUM_EXEC_PROCS"})
+		So(err, ShouldBeNil)
+		So(recovered, ShouldResemble, &Details{NumExecProcs: 3})
+
+		recovered, err = DeserializeDetails(detailBytes, []string{"PENDING_TIME_SEC"})
+		So(err, ShouldBeNil)
+		So(recovered, ShouldResemble, &Details{PendingTimeSec: 4})
+
+		recovered, err = DeserializeDetails(detailBytes, []string{"QUEUE_NAME"})
+		So(err, ShouldBeNil)
+		So(recovered, ShouldResemble, &Details{QueueName: "qname"})
+
+		recovered, err = DeserializeDetails(detailBytes, []string{"RUN_TIME_SEC"})
+		So(err, ShouldBeNil)
+		So(recovered, ShouldResemble, &Details{RunTimeSec: 5})
+
+		recovered, err = DeserializeDetails(detailBytes, []string{"timestamp"})
+		So(err, ShouldBeNil)
+		So(recovered, ShouldResemble, &Details{Timestamp: 6})
+
+		recovered, err = DeserializeDetails(detailBytes, []string{"USER_NAME"})
+		So(err, ShouldBeNil)
+		So(recovered, ShouldResemble, &Details{UserName: "uname"})
+
+		recovered, err = DeserializeDetails(detailBytes, []string{"WASTED_CPU_SECONDS"})
+		So(err, ShouldBeNil)
+		So(recovered, ShouldResemble, &Details{WastedCPUSeconds: 7.1})
+
+		recovered, err = DeserializeDetails(detailBytes, []string{"WASTED_MB_SECONDS"})
+		So(err, ShouldBeNil)
+		So(recovered, ShouldResemble, &Details{WastedMBSeconds: 7.2})
+
+		recovered, err = DeserializeDetails(detailBytes, []string{"WASTED_MB_SECONDS", "BOM"})
+		So(err, ShouldBeNil)
+		So(recovered, ShouldResemble, &Details{BOM: "bname", WastedMBSeconds: 7.2})
 	})
 }
 
@@ -102,6 +187,7 @@ func TestHitSet(t *testing.T) {
 		}, numHits)
 
 		So(len(hitSet.Hits), ShouldEqual, numHits)
+		So(hitSet.Total.Value, ShouldEqual, numHits)
 	})
 
 	Convey("You can add Hits to a Result in parallel", t, func() {
@@ -114,6 +200,7 @@ func TestHitSet(t *testing.T) {
 		}, numHits)
 
 		So(len(result.HitSet.Hits), ShouldEqual, numHits)
+		So(result.HitSet.Total.Value, ShouldEqual, numHits)
 	})
 }
 

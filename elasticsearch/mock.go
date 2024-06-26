@@ -31,6 +31,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -61,8 +62,7 @@ const (
 		"hits": {
 			"total":{"value":2},
 			"hits": []
-		},
-		"aggregations": {}
+		}
 	}`
 	testNonAggQueryResponseSize = `{
 		"hits": {
@@ -71,8 +71,7 @@ const (
 				{"_id": "1", "_source": { "ACCOUNTING_NAME": "pathdev", "USER_NAME": "pathpipe", "QUEUE_NAME": "transfer" } },
 				{"_id": "2", "_source": { "ACCOUNTING_NAME": "a2", "USER_NAME": "u2", "QUEUE_NAME": "q2" } }
 			]
-		},
-		"aggregations": {}
+		}
 	}`
 	testNonAggQueryResponseSizeSources = `{
 		"hits": {
@@ -81,8 +80,7 @@ const (
 				{"_id": "1", "_source": { "USER_NAME": "pathpipe", "QUEUE_NAME": "transfer" } },
 				{"_id": "2", "_source": { "USER_NAME": "u2", "QUEUE_NAME": "q2" } }
 			]
-		},
-		"aggregations": {}
+		}
 	}`
 
 	testScollQueryManyHits = `{"size":10000,"query":{"bool":{"filter":[{"match_phrase":{"META_CLUSTER_NAME":"farm"}},{"range":{"timestamp":{"lte":"2024-05-04T00:00:00Z","gte":"2024-05-03T15:00:00Z","format":"strict_date_optional_time"}}}]}}}` //nolint:lll
@@ -169,8 +167,7 @@ func (m mockTransport) scrollHits() string {
 		`
 				{"_id": "id", "_source": { "USER_NAME": "u" } }
 			]
-		},
-		"aggregations": {}
+		}
 	}`
 }
 
@@ -178,22 +175,24 @@ func (m mockTransport) scrollHits() string {
 // server.
 type Mock struct {
 	client *Client
+	index  string
 }
 
 // NewMock returns a Mock that you can get a mock Client and queries from.
-func NewMock() *Mock {
+func NewMock(index string) *Mock {
 	config := Config{
 		Host:      "mock",
 		Username:  "mock",
 		Password:  "mock",
 		Scheme:    "http",
 		Port:      mockPort,
+		Index:     index,
 		transport: mockTransport{},
 	}
 
 	client, _ := NewClient(config) //nolint:errcheck
 
-	return &Mock{client: client}
+	return &Mock{client: client, index: url.QueryEscape(index)}
 }
 
 // Client returns a Client that talks to a mock Elastic Search server, useful
@@ -204,7 +203,7 @@ func (m *Mock) Client() *Client {
 
 // AggQuery returns a http.Request that is requesting an aggregation search.
 func (m *Mock) AggQuery() *http.Request {
-	req := httptest.NewRequest(http.MethodPost, "/"+SearchPage, strings.NewReader(testAggQuery))
+	req := httptest.NewRequest(http.MethodPost, "/"+m.index+"/"+SearchPage, strings.NewReader(testAggQuery))
 
 	return req
 }
@@ -214,7 +213,7 @@ func (m *Mock) AggQuery() *http.Request {
 // documents (which will match the number of hits you get back if your args
 // include the scroll parameter).
 func (m *Mock) ScrollQuery(args string) (*http.Request, int) {
-	req := httptest.NewRequest(http.MethodPost, "/"+SearchPage+args, strings.NewReader(testScollQueryManyHits))
+	req := httptest.NewRequest(http.MethodPost, "/"+m.index+"/"+SearchPage+args, strings.NewReader(testScollQueryManyHits))
 
 	return req, testScrollManyHitsNum
 }

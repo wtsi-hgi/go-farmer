@@ -26,7 +26,6 @@
 package cmd
 
 import (
-	"net"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -58,6 +57,9 @@ configured real elastic server returns.
 
 Scroll search query results will come from an in-memory cached version of what
 the configured local database returns.
+
+All other requests will be served by the real elastic server, with this server
+acting as a transparent proxy.
 `,
 	Run: func(_ *cobra.Command, _ []string) {
 		config := ParseConfig()
@@ -84,9 +86,9 @@ the configured local database returns.
 			die("failed to create an LRU cache: %s", err)
 		}
 
-		server := server.New(cq)
+		server := server.New(cq, config.Elastic.Index, config.ElasticURL())
 
-		graceful.Run(net.JoinHostPort(config.Farmer.Host, config.Farmer.Port), gracefulTimeout, server)
+		graceful.Run(config.FarmerHostPort(), gracefulTimeout, server)
 	},
 }
 
