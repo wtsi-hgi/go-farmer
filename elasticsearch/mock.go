@@ -191,7 +191,7 @@ func NewMock() *Mock {
 		transport: mockTransport{},
 	}
 
-	client, _ := NewClient(config, "mock-index") //nolint:errcheck
+	client, _ := NewClient(config) //nolint:errcheck
 
 	return &Mock{client: client}
 }

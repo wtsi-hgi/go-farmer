@@ -84,7 +84,7 @@ func init() {
 }
 
 func demo(config *YAMLConfig, period int, debug bool) {
-	client, err := es.NewClient(config.ToESConfig(), config.Farmer.Index)
+	client, err := es.NewClient(config.ToESConfig())
 	if err != nil {
 		die("failed to create real elasticsearch client: %s", err)
 	}

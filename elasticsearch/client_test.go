@@ -46,18 +46,19 @@ func TestElasticSearchClientMock(t *testing.T) {
 			Password:  "mock",
 			Scheme:    "http",
 			Port:      1234,
+			Index:     "mock-*",
 			transport: mockTrans,
 		}
 
-		doClientTests(t, config, "mockindex", 2)
+		doClientTests(t, config, 2)
 	})
 }
 
-func doClientTests(t *testing.T, config Config, index string, expectedNumHits int) {
+func doClientTests(t *testing.T, config Config, expectedNumHits int) {
 	t.Helper()
 
 	Convey("You can create an elasticsearch client", func() {
-		client, err := NewClient(config, index)
+		client, err := NewClient(config)
 		So(err, ShouldBeNil)
 		So(client, ShouldNotBeNil)
 
@@ -185,8 +186,9 @@ func TestElasticSearchClientReal(t *testing.T) {
 			Password: password,
 			Scheme:   scheme,
 			Port:     port,
+			Index:    index,
 		}
 
-		doClientTests(t, config, index, 403)
+		doClientTests(t, config, 403)
 	})
 }

@@ -62,7 +62,7 @@ the configured local database returns.
 	Run: func(_ *cobra.Command, _ []string) {
 		config := ParseConfig()
 
-		client, err := es.NewClient(config.ToESConfig(), config.Farmer.Index)
+		client, err := es.NewClient(config.ToESConfig())
 		if err != nil {
 			die("failed to create real elasticsearch client: %s", err)
 		}

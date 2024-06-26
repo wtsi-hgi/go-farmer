@@ -45,11 +45,11 @@ type YAMLConfig struct {
 		Password string
 		Scheme   string
 		Port     int
+		Index    string
 	}
 	Farmer struct {
 		Host            string
 		Port            string
-		Index           string
 		DatabaseDir     string `yaml:"database_dir"`
 		RawFileSize     int    `yaml:"file_size"`
 		RawBufferSize   int    `yaml:"buffer_size"`
@@ -84,6 +84,7 @@ func (c *YAMLConfig) ToESConfig() es.Config {
 		Scheme:   c.Elastic.Scheme,
 		Username: c.Elastic.Username,
 		Password: c.Elastic.Password,
+		Index:    c.Elastic.Index,
 	}
 }
 

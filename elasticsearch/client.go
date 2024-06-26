@@ -47,6 +47,7 @@ type Config struct {
 	Password  string
 	Scheme    string
 	Port      int
+	Index     string
 	transport http.RoundTripper
 }
 
@@ -58,8 +59,8 @@ type Client struct {
 }
 
 // NewClient returns a Client that can talk to the configured Elastic Search
-// server and will use the given index for queries.
-func NewClient(config Config, index string) (*Client, error) {
+// server and will use the configured index for queries.
+func NewClient(config Config) (*Client, error) {
 	cfg := es.Config{
 		Addresses: []string{
 			fmt.Sprintf("%s://%s:%d", config.Scheme, config.Host, config.Port),
@@ -71,7 +72,7 @@ func NewClient(config Config, index string) (*Client, error) {
 
 	client, err := es.NewClient(cfg)
 
-	return &Client{client: client, index: index}, err
+	return &Client{client: client, index: config.Index}, err
 }
 
 // ElasticInfo is the type returned by an Info() request. It just tells you the
