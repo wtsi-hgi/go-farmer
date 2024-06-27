@@ -206,6 +206,7 @@ func TestDB(t *testing.T) {
 				retrieved, err = db.Scroll(query)
 				So(err, ShouldBeNil)
 				So(retrieved.HitSet, ShouldNotBeNil)
+				So(retrieved.ScrollID, ShouldEqual, pretendScrollID)
 
 				expectedBomHits := expectedNumHits / 2
 				So(len(retrieved.HitSet.Hits), ShouldEqual, expectedBomHits)

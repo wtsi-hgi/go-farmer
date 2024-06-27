@@ -57,7 +57,8 @@ const (
 
 	oneDay = 24 * time.Hour
 
-	dateFormat = "2006/01/02"
+	dateFormat      = "2006/01/02"
+	pretendScrollID = "farmer_scroll_id"
 )
 
 // Error is an error type that has a Msg with one of our const Err* messages.
@@ -253,6 +254,8 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 	if len(errors) > 0 {
 		return nil, errors[0]
 	}
+
+	result.ScrollID = pretendScrollID
 
 	return result, nil
 }
