@@ -59,7 +59,8 @@ Scroll search query results will come from an in-memory cached version of what
 the configured local database returns.
 
 All other requests will be served by the real elastic server, with this server
-acting as a transparent proxy.
+acting as a transparent proxy. (Except for /_search/scroll queries, which return
+a fixed fake answer since we handle scrolls during search.)
 `,
 	Run: func(_ *cobra.Command, _ []string) {
 		config := ParseConfig()
