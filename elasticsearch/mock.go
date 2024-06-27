@@ -208,7 +208,7 @@ func (m *Mock) AggQuery() *http.Request {
 	return req
 }
 
-// ScrollQuery returns a http.Request that is requesting a scroll search.Any
+// ScrollQuery returns a http.Request that is requesting a scroll search. Any
 // args are appended to the search url. Also returns the number of matching
 // documents (which will match the number of hits you get back if your args
 // include the scroll parameter).

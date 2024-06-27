@@ -147,6 +147,31 @@ func TestServer(t *testing.T) {
 
 			So(result.Aggregations, ShouldBeNil)
 			So(len(result.HitSet.Hits), ShouldEqual, expectedNumHits)
+			So(result.ScrollID, ShouldNotBeBlank)
+		})
+
+		Convey("and scroll endpoint requests, server returns pretend responses", func() {
+			urlStr += es.SearchPage + "/" + scrollPage
+			req := httptest.NewRequest(http.MethodPost, urlStr, nil)
+			w := httptest.NewRecorder()
+
+			server.ServeHTTP(w, req)
+
+			resp := w.Result()
+			So(resp.StatusCode, ShouldEqual, http.StatusOK)
+
+			req = httptest.NewRequest(http.MethodDelete, urlStr, nil)
+			w = httptest.NewRecorder()
+
+			server.ServeHTTP(w, req)
+
+			resp = w.Result()
+			So(resp.StatusCode, ShouldEqual, http.StatusOK)
+			So(resp.Body, ShouldNotBeNil)
+
+			bodyBytes, err := io.ReadAll(resp.Body)
+			So(err, ShouldBeNil)
+			So(string(bodyBytes), ShouldEqual, `{"succeeded":true,"num_freed":0}`)
 		})
 	})
 }

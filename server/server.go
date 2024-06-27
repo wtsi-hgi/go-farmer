@@ -35,7 +35,11 @@ import (
 	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
 )
 
-const root = "/"
+const (
+	slash           = "/"
+	scrollPage      = "scroll"
+	pretendScrollID = "farmer_scroll_id"
+)
 
 // SearchScroller types have Search and Scroll functions for querying something
 // like elastic search. The Scroll will automatically get all hits in a single
@@ -75,8 +79,9 @@ func New(sc SearchScroller, index string, proxyTarget *url.URL) *Server {
 		sc:  sc,
 	}
 
-	mux.HandleFunc(root+url.QueryEscape(index)+"/"+es.SearchPage, s.search)
-	mux.Handle(root, proxy)
+	mux.HandleFunc(slash+url.QueryEscape(index)+slash+es.SearchPage, s.search)
+	mux.HandleFunc(slash+es.SearchPage+slash+scrollPage, s.fakeScroll)
+	mux.Handle(slash, proxy)
 
 	return s
 }
@@ -93,6 +98,9 @@ func sendMessageToClient(w http.ResponseWriter, msg string) {
 	}
 }
 
+// search handles /index/_search requests which are for aggregation queries, and
+// also for ?scroll searches which we will auto-scroll without the use of the
+// /_search/scroll endpoint.
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	query, ok := es.NewQuery(r)
 	if !ok {
@@ -114,6 +122,22 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// fakeScroll handles unneeded requests to the /_search/scroll endpoint.
+func (s *Server) fakeScroll(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	msg := ""
+
+	if r.Method == http.MethodPost {
+		msg = `{"_scroll_id":"` + pretendScrollID + `}`
+	} else if r.Method == http.MethodDelete {
+		msg = `{"succeeded":true,"num_freed":0}`
+	}
+
+	sendMessageToClient(w, msg)
+}
+
 func (s *Server) handleQuery(w http.ResponseWriter, query *es.Query) (*es.Result, bool) {
 	var (
 		result *es.Result
@@ -122,6 +146,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, query *es.Query) (*es.Result
 
 	if query.IsScroll() {
 		result, err = s.sc.Scroll(query)
+		result.ScrollID = pretendScrollID
 	} else {
 		result, err = s.sc.Search(query)
 	}
