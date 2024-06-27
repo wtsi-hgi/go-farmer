@@ -419,6 +419,10 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 
 	err = bstd.VerifyUnmarshal(n, encoded)
 
+	if doField["JOB_NAME"] && details.JobName == "" {
+		details.JobName = "_"
+	}
+
 	return details, err
 }
 
