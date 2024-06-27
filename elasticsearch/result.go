@@ -72,10 +72,12 @@ func NewResult() *Result {
 	}
 }
 
-// AddHitDetails can be used if constructing your own Hits manually, and don't
-// care about the Hit's ID. It is thread safe.
+// AddHitDetails can be used if constructing your own Hits manually, with the
+// Hit ID actually stored in the details (temporarily). It is thread safe.
 func (r *Result) AddHitDetails(details *Details) {
-	r.HitSet.AddHit("", details)
+	id := details.ID
+	details.ID = ""
+	r.HitSet.AddHit(id, details)
 }
 
 // AddError can be used to store errors generated while creating a Result in a
@@ -135,6 +137,7 @@ type Hit struct {
 
 // Details holds the document information of a Hit.
 type Details struct {
+	ID              string `json:"_id,omitempty"`
 	AccountingName  string `json:"ACCOUNTING_NAME,omitempty"`
 	AvailCPUTimeSec int    `json:"AVAIL_CPU_TIME_SEC,omitempty"`
 	// AVG_MEM_EFFICIENCY_PERCENT     float64
@@ -184,7 +187,8 @@ type Details struct {
 // Serialize converts a Details to a byte slice representation suitable for
 // storing on disk.
 func (d *Details) Serialize() ([]byte, error) { //nolint:funlen,misspell
-	n := bstd.SizeString(d.AccountingName) //nolint:varnamelen
+	n := bstd.SizeString(d.ID) //nolint:varnamelen
+	n += bstd.SizeString(d.AccountingName)
 	n += bstd.SizeInt()
 	n += bstd.SizeString(d.BOM)
 	n += bstd.SizeString(d.Command)
@@ -204,6 +208,7 @@ func (d *Details) Serialize() ([]byte, error) { //nolint:funlen,misspell
 	bpre.Reset()
 
 	n, encoded := bstd.Marshal(n)
+	n = bstd.MarshalString(n, encoded, d.ID)
 	n = bstd.MarshalString(n, encoded, d.AccountingName)
 	n = bstd.MarshalInt(n, encoded, d.AvailCPUTimeSec)
 	n = bstd.MarshalString(n, encoded, d.BOM)
@@ -248,10 +253,15 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 		}
 	}
 
+	n, details.ID, err = bstd.UnmarshalString(0, encoded)
+	if err != nil {
+		return nil, err
+	}
+
 	if doAllFields || doField["ACCOUNTING_NAME"] {
-		n, details.AccountingName, err = bstd.UnmarshalString(0, encoded)
+		n, details.AccountingName, err = bstd.UnmarshalString(n, encoded)
 	} else {
-		n, err = bstd.SkipString(0, encoded)
+		n, err = bstd.SkipString(n, encoded)
 	}
 
 	if err != nil {

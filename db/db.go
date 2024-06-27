@@ -200,6 +200,7 @@ func getFixedWidthFields(hit es.Hit) ([]byte, []byte, byte, []byte, error) {
 		isGPU = inGPUQueue
 	}
 
+	hit.Details.ID = hit.ID
 	encodedDetails, err := hit.Details.Serialize() //nolint:misspell
 	if err != nil {
 		return nil, nil, 0, nil, err

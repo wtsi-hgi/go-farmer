@@ -145,7 +145,7 @@ func TestDB(t *testing.T) {
 
 			nextFieldStart++
 			detailsLen := int(binary.BigEndian.Uint32(b[nextFieldStart : nextFieldStart+lengthEncodeWidth]))
-			expectedDetailsLen := 117
+			expectedDetailsLen := 119
 			So(detailsLen, ShouldEqual, expectedDetailsLen)
 
 			nextFieldStart += lengthEncodeWidth
@@ -158,6 +158,7 @@ func TestDB(t *testing.T) {
 
 			So(details, ShouldResemble, result.HitSet.Hits[1].Details)
 			So(details.Timestamp, ShouldEqual, timeStamp.Unix())
+			So(details.ID, ShouldEqual, result.HitSet.Hits[1].ID)
 
 			nextFieldStart += detailsLen
 			stamp = timeStampBytesToFormatString(b[nextFieldStart : nextFieldStart+timeStampWidth])
