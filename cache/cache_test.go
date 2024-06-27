@@ -90,12 +90,18 @@ func TestCache(t *testing.T) {
 		Convey("You can get uncached, then cached Search results", func() {
 			So(ss.searchCalls, ShouldEqual, 0)
 
-			results, err := cq.Search(query)
+			data, err := cq.Search(query)
+			So(err, ShouldBeNil)
+
+			results, err := Decompress(data)
 			So(err, ShouldBeNil)
 			So(results.HitSet.Total.Value, ShouldEqual, expectedTotal)
 			So(ss.searchCalls, ShouldEqual, 1)
 
-			results, err = cq.Search(query)
+			data, err = cq.Search(query)
+			So(err, ShouldBeNil)
+
+			results, err = Decompress(data)
 			So(err, ShouldBeNil)
 			So(results.HitSet.Total.Value, ShouldEqual, expectedTotal)
 			So(ss.searchCalls, ShouldEqual, 1)
@@ -109,18 +115,27 @@ func TestCache(t *testing.T) {
 					}}},
 				}
 
-				results, err := cq.Search(query2)
+				data, err = cq.Search(query2)
+				So(err, ShouldBeNil)
+
+				results, err = Decompress(data)
 				So(err, ShouldBeNil)
 				So(results.HitSet.Total.Value, ShouldEqual, expectedTotal2)
 				So(ss.searchCalls, ShouldEqual, 2)
 
-				results, err = cq.Search(query2)
+				data, err = cq.Search(query2)
+				So(err, ShouldBeNil)
+
+				results, err = Decompress(data)
 				So(err, ShouldBeNil)
 				So(results.HitSet.Total.Value, ShouldEqual, expectedTotal2)
 				So(ss.searchCalls, ShouldEqual, 2)
 				So(ss.scrollCalls, ShouldEqual, 0)
 
-				results, err = cq.Search(query)
+				data, err = cq.Search(query)
+				So(err, ShouldBeNil)
+
+				results, err = Decompress(data)
 				So(err, ShouldBeNil)
 				So(results.HitSet.Total.Value, ShouldEqual, expectedTotal)
 				So(ss.searchCalls, ShouldEqual, 2)
@@ -133,22 +148,34 @@ func TestCache(t *testing.T) {
 						}}},
 					}
 
-					results, err := cq.Search(query3)
+					data, err = cq.Search(query3)
+					So(err, ShouldBeNil)
+
+					results, err = Decompress(data)
 					So(err, ShouldBeNil)
 					So(results.HitSet.Total.Value, ShouldEqual, expectedTotal3)
 					So(ss.searchCalls, ShouldEqual, 3)
 
-					results, err = cq.Search(query3)
+					data, err = cq.Search(query3)
+					So(err, ShouldBeNil)
+
+					results, err = Decompress(data)
 					So(err, ShouldBeNil)
 					So(results.HitSet.Total.Value, ShouldEqual, expectedTotal3)
 					So(ss.searchCalls, ShouldEqual, 3)
 
-					results, err = cq.Search(query)
+					data, err = cq.Search(query)
+					So(err, ShouldBeNil)
+
+					results, err = Decompress(data)
 					So(err, ShouldBeNil)
 					So(results.HitSet.Total.Value, ShouldEqual, expectedTotal)
 					So(ss.searchCalls, ShouldEqual, 3)
 
-					results, err = cq.Search(query2)
+					data, err = cq.Search(query2)
+					So(err, ShouldBeNil)
+
+					results, err = Decompress(data)
 					So(err, ShouldBeNil)
 					So(results.HitSet.Total.Value, ShouldEqual, expectedTotal2)
 					So(ss.searchCalls, ShouldEqual, 4)
@@ -159,12 +186,18 @@ func TestCache(t *testing.T) {
 		Convey("You can get uncached, then cached Scroll results", func() {
 			So(ss.scrollCalls, ShouldEqual, 0)
 
-			results, err := cq.Scroll(query)
+			data, err := cq.Scroll(query)
+			So(err, ShouldBeNil)
+
+			results, err := Decompress(data)
 			So(err, ShouldBeNil)
 			So(results.HitSet.Total.Value, ShouldEqual, expectedTotal)
 			So(ss.scrollCalls, ShouldEqual, 1)
 
-			results, err = cq.Scroll(query)
+			data, err = cq.Scroll(query)
+			So(err, ShouldBeNil)
+
+			results, err = Decompress(data)
 			So(err, ShouldBeNil)
 			So(results.HitSet.Total.Value, ShouldEqual, expectedTotal)
 			So(ss.scrollCalls, ShouldEqual, 1)

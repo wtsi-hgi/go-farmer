@@ -26,7 +26,12 @@
 package cache
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
+
 	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/klauspost/compress/gzip"
 	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
 )
 
@@ -44,18 +49,20 @@ type Scroller interface {
 
 type querier func(query *es.Query) (*es.Result, error)
 
-// CachedQuerier is an LRU cache wrapper around a Searcher and a Scroller.
+// CachedQuerier is an LRU cache wrapper around a Searcher and a Scroller that
+// stores and returns their Results as compressed JSON.
 type CachedQuerier struct {
 	Searcher Searcher
 	Scroller Scroller
-	lru      *lru.Cache[string, *es.Result]
+	lru      *lru.Cache[string, []byte]
 }
 
-// New returns a CachedQuerier that both takes and is itself a Searcher and a
-// Scroller. It caches cacheSize Search() and Scroll() queries, evicting the
-// least recently used query results once the cache is full.
+// New returns a CachedQuerier that takes a Searcher and a Scroller. It caches
+// cacheSize Search() and Scroll() queries, evicting the least recently used
+// query results once the cache is full. It stores and returns compressed JSON
+// of the Results.
 func New(searcher Searcher, scroller Scroller, cacheSize int) (*CachedQuerier, error) {
-	l, err := lru.New[string, *es.Result](cacheSize)
+	l, err := lru.New[string, []byte](cacheSize)
 	if err != nil {
 		return nil, err
 	}
@@ -67,18 +74,18 @@ func New(searcher Searcher, scroller Scroller, cacheSize int) (*CachedQuerier, e
 	}, nil
 }
 
-// Search returns any cached result for the given query, otherwise returns the
-// result of calling our Searcher.Search().
-func (c *CachedQuerier) Search(query *es.Query) (*es.Result, error) {
+// Search returns any cached data for the given query, otherwise returns the
+// compressed JSON result of calling our Searcher.Search().
+func (c *CachedQuerier) Search(query *es.Query) ([]byte, error) {
 	return c.wrapWithCache(c.Searcher.Search, query)
 }
 
-func (c *CachedQuerier) wrapWithCache(querier querier, query *es.Query) (*es.Result, error) {
+func (c *CachedQuerier) wrapWithCache(querier querier, query *es.Query) ([]byte, error) {
 	cacheKey := query.Key()
 
-	result, ok := c.lru.Get(cacheKey)
+	compressed, ok := c.lru.Get(cacheKey)
 	if ok {
-		return result, nil
+		return compressed, nil
 	}
 
 	result, err := querier(query)
@@ -86,13 +93,55 @@ func (c *CachedQuerier) wrapWithCache(querier querier, query *es.Query) (*es.Res
 		return nil, err
 	}
 
-	c.lru.Add(cacheKey, result)
+	compressed, err = compress(result)
+	if err != nil {
+		return nil, err
+	}
 
-	return result, nil
+	c.lru.Add(cacheKey, compressed)
+
+	return compressed, nil
 }
 
-// Scroll returns any cached result for the given query, otherwise returns the
-// result of calling our Scroller.Scroll().
-func (c *CachedQuerier) Scroll(query *es.Query) (*es.Result, error) {
+func compress(result *es.Result) ([]byte, error) {
+	j, err := json.Marshal(result)
+	if err != nil {
+		return nil, err
+	}
+
+	buf := bytes.Buffer{}
+	gz := gzip.NewWriter(&buf)
+
+	_, err = gz.Write(j)
+
+	gz.Close()
+
+	return buf.Bytes(), err
+}
+
+// Scroll returns any cached data for the given query, otherwise returns the
+// compressed JSON result of calling our Scroller.Scroll().
+func (c *CachedQuerier) Scroll(query *es.Query) ([]byte, error) {
 	return c.wrapWithCache(c.Scroller.Scroll, query)
+}
+
+// Decompress takes the output of CachedQuerier.Search() or Scroll() and turns
+// it back in to a Result.
+func Decompress(data []byte) (*es.Result, error) {
+	gr, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+
+	data, err = io.ReadAll(gr)
+	if err != nil {
+		return nil, err
+	}
+
+	gr.Close()
+
+	result := &es.Result{}
+	err = json.Unmarshal(data, result)
+
+	return result, err
 }

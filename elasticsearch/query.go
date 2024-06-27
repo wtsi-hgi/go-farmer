@@ -49,12 +49,12 @@ const (
 
 // Query describes the search query you wish to run against Elastic Search.
 type Query struct {
-	Size     int          `json:"size"`
-	Aggs     *Aggs        `json:"aggs,omitempty"`
-	Query    *QueryFilter `json:"query,omitempty"`
-	Sort     []string     `json:"sort,omitempty"`
-	Source   []string     `json:"_source,omitempty"`
-	isScroll bool
+	Size           int          `json:"size"`
+	Aggs           *Aggs        `json:"aggs,omitempty"`
+	Query          *QueryFilter `json:"query,omitempty"`
+	Sort           []string     `json:"sort,omitempty"`
+	Source         []string     `json:"_source,omitempty"`
+	ScrollParamSet bool         `json:"_scroll,omitempty"`
 }
 
 // Aggs is used to specify an aggregation query.
@@ -186,14 +186,14 @@ func (q *Query) handleRequestParams(parms url.Values) {
 
 	scrollParam := parms.Get("scroll")
 	if scrollParam != "" {
-		q.isScroll = true
+		q.ScrollParamSet = true
 	}
 }
 
 // IsScroll returns true if the http.Request this Query was made from had a
 // scroll parameter.
 func (q *Query) IsScroll() bool {
-	return q.isScroll
+	return q.ScrollParamSet
 }
 
 // Key returns a string that is unique to this Query.

@@ -69,7 +69,7 @@ Default is -p mins for 10 minutes of data.
 			die("invalid period supplied")
 		}
 
-		demo(config, period, demoDebug)
+		demo(config, period)
 	},
 }
 
@@ -83,7 +83,7 @@ func init() {
 		"output additional debug info")
 }
 
-func demo(config *YAMLConfig, period int, debug bool) {
+func demo(config *YAMLConfig, period int) { //nolint:funlen,gocognit,gocyclo
 	client, err := es.NewClient(config.ToESConfig())
 	if err != nil {
 		die("failed to create real elasticsearch client: %s", err)
@@ -124,8 +124,6 @@ func demo(config *YAMLConfig, period int, debug bool) {
 	}
 
 	cq.Scroller = ldb
-
-	t := time.Now()
 
 	bomQuery := &es.Query{
 		Aggs: &es.Aggs{
@@ -183,20 +181,9 @@ func demo(config *YAMLConfig, period int, debug bool) {
 		},
 	}
 
-	result, err := cq.Search(bomQuery)
-	if err != nil {
-		die("error searching: %s", err)
-	}
-
-	if len(result.HitSet.Hits) > 0 {
-		cliPrint("num hits: %+v\n", len(result.HitSet.Hits))
-	}
-
-	if len(result.Aggregations.Stats.Buckets) > 0 {
-		cliPrint("num aggs: %+v\n", len(result.Aggregations.Stats.Buckets))
-	}
-
-	cliPrint("took: %s\n\n", time.Since(t))
+	timeSearch(func() ([]byte, error) {
+		return cq.Search(bomQuery)
+	})
 
 	lte := "2024-06-04T00:00:00Z"
 	gte := "2024-05-04T00:00:00Z"
@@ -225,68 +212,17 @@ func demo(config *YAMLConfig, period int, debug bool) {
 		}}},
 	}
 
-	t = time.Now()
+	timeSearch(func() ([]byte, error) {
+		return cq.Scroll(teamQuery)
+	})
 
-	result, err = cq.Scroll(teamQuery)
-	if err != nil {
-		die("error searching: %s", err)
-	}
+	timeSearch(func() ([]byte, error) {
+		return cq.Search(bomQuery)
+	})
 
-	if result == nil {
-		return
-	}
-
-	if len(result.HitSet.Hits) > 0 {
-		cliPrint("num hits: %+v\n", len(result.HitSet.Hits))
-	}
-
-	if len(result.Aggregations.Stats.Buckets) > 0 {
-		cliPrint("num aggs: %+v\n", len(result.Aggregations.Stats.Buckets))
-	}
-
-	cliPrint("took: %s\n\n", time.Since(t))
-
-	t = time.Now()
-
-	result, err = cq.Search(bomQuery)
-	if err != nil {
-		die("error searching: %s", err)
-	}
-
-	if len(result.HitSet.Hits) > 0 {
-		cliPrint("num hits: %+v\n", len(result.HitSet.Hits))
-	}
-
-	if len(result.Aggregations.Stats.Buckets) > 0 {
-		cliPrint("num aggs: %+v\n", len(result.Aggregations.Stats.Buckets))
-	}
-
-	cliPrint("took: %s\n\n", time.Since(t))
-
-	t = time.Now()
-
-	result, err = cq.Scroll(teamQuery)
-	if err != nil {
-		die("error searching: %s", err)
-	}
-
-	if result == nil {
-		return
-	}
-
-	if len(result.HitSet.Hits) > 0 {
-		cliPrint("num hits: %+v\n", len(result.HitSet.Hits))
-
-		if debug {
-			cliPrint("first hit: %+v\n", result.HitSet.Hits[0].Details)
-		}
-	}
-
-	if len(result.Aggregations.Stats.Buckets) > 0 {
-		cliPrint("num aggs: %+v\n", len(result.Aggregations.Stats.Buckets))
-	}
-
-	cliPrint("took: %s\n\n", time.Since(t))
+	timeSearch(func() ([]byte, error) {
+		return cq.Scroll(teamQuery)
+	})
 }
 
 func initDB(cq *cache.CachedQuerier, db *db.DB, period int) error {
@@ -319,13 +255,18 @@ func initDB(cq *cache.CachedQuerier, db *db.DB, period int) error {
 
 	t := time.Now()
 
-	result, err := cq.Scroll(query)
+	compressedResult, err := cq.Scroll(query)
 	if err != nil {
 		return err
 	}
 
 	cliPrint("search took: %s\n", time.Since(t))
 	t = time.Now()
+
+	result, err := cache.Decompress(compressedResult)
+	if err != nil {
+		return err
+	}
 
 	err = db.Store(result)
 	if err != nil {
@@ -335,4 +276,36 @@ func initDB(cq *cache.CachedQuerier, db *db.DB, period int) error {
 	cliPrint("store took: %s\n", time.Since(t))
 
 	return nil
+}
+
+func timeSearch(cb func() ([]byte, error)) {
+	t := time.Now()
+
+	data, err := cb()
+	if err != nil {
+		die("error searching: %s", err)
+	}
+
+	result, err := cache.Decompress(data)
+	if err != nil {
+		die("error decompressing: %s", err)
+	}
+
+	if len(result.HitSet.Hits) > 0 {
+		cliPrint("num hits: %+v\n", len(result.HitSet.Hits))
+
+		if demoDebug {
+			cliPrint("first hit: %+v\n", result.HitSet.Hits[0].Details)
+		}
+	}
+
+	if len(result.Aggregations.Stats.Buckets) > 0 {
+		cliPrint("num aggs: %+v\n", len(result.Aggregations.Stats.Buckets))
+
+		if demoDebug {
+			cliPrint("first agg: %+v\n", result.Aggregations.Stats.Buckets[0])
+		}
+	}
+
+	cliPrint("took: %s\n\n", time.Since(t))
 }

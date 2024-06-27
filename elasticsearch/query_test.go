@@ -135,7 +135,7 @@ func TestQuery(t *testing.T) {
 
 		key6 := query.Key()
 		So(key6, ShouldNotBeBlank)
-		So(key6, ShouldEqual, key5)
+		So(key6, ShouldNotEqual, key5)
 		So(query.IsScroll(), ShouldBeTrue)
 	})
 

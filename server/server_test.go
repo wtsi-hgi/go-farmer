@@ -27,7 +27,6 @@ package server
 
 import (
 	"bytes"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -36,6 +35,7 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/wtsi-hgi/go-farmer/cache"
 	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
 )
 
@@ -55,7 +55,10 @@ func TestServer(t *testing.T) {
 		defer mockReal.Close()
 
 		mock := es.NewMock(index)
-		server := New(mock.Client(), index, &url.URL{Host: strings.TrimPrefix(mockReal.URL, "http://"), Scheme: "http"})
+		cq, err := cache.New(mock.Client(), mock.Client(), 1)
+		So(err, ShouldBeNil)
+
+		server := New(cq, index, &url.URL{Host: strings.TrimPrefix(mockReal.URL, "http://"), Scheme: "http"})
 
 		Convey("and non-search requests, server acts as a proxy to the 'real' elasticsearch server", func() {
 			req := httptest.NewRequest(http.MethodGet, urlStr, nil)
@@ -101,14 +104,12 @@ func TestServer(t *testing.T) {
 			resp := w.Result()
 			So(resp.StatusCode, ShouldEqual, http.StatusOK)
 
-			defer resp.Body.Close()
-
 			data, err := io.ReadAll(resp.Body)
 			So(err, ShouldBeNil)
-			So(len(data), ShouldEqual, 241)
+			So(len(data), ShouldEqual, 138)
+			resp.Body.Close()
 
-			result := &es.Result{}
-			err = json.Unmarshal(data, result)
+			result, err := cache.Decompress(data)
 			So(err, ShouldBeNil)
 
 			So(len(result.HitSet.Hits), ShouldEqual, 0)
@@ -124,9 +125,11 @@ func TestServer(t *testing.T) {
 			resp := w.Result()
 			So(resp.StatusCode, ShouldEqual, http.StatusOK)
 
-			dec := json.NewDecoder(resp.Body)
-			result := &es.Result{}
-			err := dec.Decode(result)
+			data, err := io.ReadAll(resp.Body)
+			So(err, ShouldBeNil)
+			resp.Body.Close()
+
+			result, err := cache.Decompress(data)
 			So(err, ShouldBeNil)
 
 			So(result.Aggregations, ShouldBeNil)
@@ -140,14 +143,16 @@ func TestServer(t *testing.T) {
 			resp = w.Result()
 			So(resp.StatusCode, ShouldEqual, http.StatusOK)
 
-			dec = json.NewDecoder(resp.Body)
-			result = &es.Result{}
-			err = dec.Decode(result)
+			data, err = io.ReadAll(resp.Body)
+			So(err, ShouldBeNil)
+			resp.Body.Close()
+
+			result, err = cache.Decompress(data)
 			So(err, ShouldBeNil)
 
 			So(result.Aggregations, ShouldBeNil)
+			So(result.HitSet.Total.Value, ShouldEqual, expectedNumHits)
 			So(len(result.HitSet.Hits), ShouldEqual, expectedNumHits)
-			So(result.ScrollID, ShouldNotBeBlank)
 		})
 
 		Convey("and scroll endpoint requests, server returns pretend responses", func() {

@@ -9,6 +9,7 @@ require (
 	github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/inconshreveable/log15 v2.16.0+incompatible
+	github.com/klauspost/compress v1.17.9
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/spf13/cobra v1.2.1
 	gopkg.in/tylerb/graceful.v1 v1.2.15

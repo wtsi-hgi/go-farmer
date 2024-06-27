@@ -26,7 +26,6 @@
 package server
 
 import (
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
@@ -36,17 +35,16 @@ import (
 )
 
 const (
-	slash           = "/"
-	scrollPage      = "scroll"
-	pretendScrollID = "farmer_scroll_id"
+	slash      = "/"
+	scrollPage = "scroll"
 )
 
 // SearchScroller types have Search and Scroll functions for querying something
 // like elastic search. The Scroll will automatically get all hits in a single
-// scroll call.
+// scroll call. They return compressed JSON of the results.
 type SearchScroller interface {
-	Search(query *es.Query) (*es.Result, error)
-	Scroll(query *es.Query) (*es.Result, error)
+	Search(query *es.Query) ([]byte, error)
+	Scroll(query *es.Query) ([]byte, error)
 }
 
 // Server is a http.Handler that pretends to be like an elastic search server,
@@ -59,12 +57,13 @@ type Server struct {
 // New returns a Server, which is an http.Handler.
 //
 // It takes SearchScroller, such as a CachedQuerier, which will be used to get
-// the results of requested searches. Searh requests are those sent to
+// the results of requested searches. Search requests are those sent to
 // "/index/_search".
 //
 // It takes proxyTarget, which should be the URL of the real elasticsearch
 // server, for which we will become a transparent proxy for all non-search
-// requests.
+// requests. (Except for /_search/scroll requests, which are handled by
+// returning some fixed results since we don't do real scolls.)
 //
 // To start a webserver, do something like:
 //
@@ -109,16 +108,18 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, ok := s.handleQuery(w, query)
+	compressedResult, ok := s.handleQuery(w, query)
 	if !ok {
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Encoding", "gzip")
 	w.WriteHeader(http.StatusOK)
 
-	if err := json.NewEncoder(w).Encode(result); err != nil {
-		slog.Error("failed to encode result as JSON", "err", err)
+	_, err := w.Write(compressedResult)
+	if err != nil {
+		slog.Error("write to client failed", "err", err)
 	}
 }
 
@@ -130,7 +131,7 @@ func (s *Server) fakeScroll(w http.ResponseWriter, r *http.Request) {
 	msg := ""
 
 	if r.Method == http.MethodPost {
-		msg = `{"_scroll_id":"` + pretendScrollID + `}`
+		msg = `{"_scroll_id":"farmer_scroll_id"}`
 	} else if r.Method == http.MethodDelete {
 		msg = `{"succeeded":true,"num_freed":0}`
 	}
@@ -138,17 +139,16 @@ func (s *Server) fakeScroll(w http.ResponseWriter, r *http.Request) {
 	sendMessageToClient(w, msg)
 }
 
-func (s *Server) handleQuery(w http.ResponseWriter, query *es.Query) (*es.Result, bool) {
+func (s *Server) handleQuery(w http.ResponseWriter, query *es.Query) ([]byte, bool) {
 	var (
-		result *es.Result
-		err    error
+		compressedResult []byte
+		err              error
 	)
 
 	if query.IsScroll() {
-		result, err = s.sc.Scroll(query)
-		result.ScrollID = pretendScrollID
+		compressedResult, err = s.sc.Scroll(query)
 	} else {
-		result, err = s.sc.Search(query)
+		compressedResult, err = s.sc.Search(query)
 	}
 
 	if err != nil {
@@ -158,5 +158,5 @@ func (s *Server) handleQuery(w http.ResponseWriter, query *es.Query) (*es.Result
 		return nil, false
 	}
 
-	return result, true
+	return compressedResult, true
 }
