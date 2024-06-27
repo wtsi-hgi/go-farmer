@@ -54,6 +54,8 @@ const (
 	inGPUQueue          = byte(2)
 	lengthEncodeWidth   = 4
 	detailsBufferLength = 16 * 1024
+	defaultFileSize     = 32 * 1024 * 1024
+	defaultBufferSize   = 4 * 1024 * 1024
 
 	oneDay = 24 * time.Hour
 
@@ -76,6 +78,12 @@ func (e Error) Error() string {
 	return e.Msg
 }
 
+type Config struct {
+	Directory  string
+	FileSize   int
+	BufferSize int
+}
+
 // DB represents a local database that uses a number of flat files to store
 // elasticsearch hit details and return them quickly.
 type DB struct {
@@ -86,25 +94,36 @@ type DB struct {
 	dateBOMDirs map[string][]string
 }
 
-// New returns a DB that will create or use the database files in the given
-// directory. Files created will be split if they get over the given fileSize in
-// bytes. Files will be read and written using a bufferSize buffer in bytes.
-func New(dir string, fileSize, bufferSize int) (*DB, error) {
+// New returns a DB that will create or use the database files in the configured
+// Directory. Files created will be split if they get over the configured
+// FileSize in bytes (default 32MB). Files will be read and written using a
+// BufferSize buffer in bytes (default 4MB).
+func New(config Config) (*DB, error) {
 	dateBOMDirs := make(map[string][]string)
 
-	_, err := os.Stat(dir)
+	_, err := os.Stat(config.Directory)
 	if err == nil {
-		err = findFlatFiles(dir, dateBOMDirs)
+		err = findFlatFiles(config.Directory, dateBOMDirs)
 	} else {
-		err = os.MkdirAll(dir, dbDirPerms)
+		err = os.MkdirAll(config.Directory, dbDirPerms)
 	}
 
 	if err != nil {
 		return nil, err
 	}
 
+	fileSize := config.FileSize
+	if fileSize == 0 {
+		fileSize = defaultFileSize
+	}
+
+	bufferSize := config.BufferSize
+	if bufferSize == 0 {
+		bufferSize = defaultBufferSize
+	}
+
 	return &DB{
-		dir:         dir,
+		dir:         config.Directory,
 		fileSize:    fileSize,
 		bufferSize:  bufferSize,
 		dbs:         make(map[string]*flatDB),

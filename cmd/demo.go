@@ -102,7 +102,7 @@ func demo(config *YAMLConfig, period int) { //nolint:funlen,gocognit,gocyclo
 		dbExisted = true
 	}
 
-	ldb, err := db.New(dbDir, config.FileSize(), config.BufferSize())
+	ldb, err := db.New(config.ToDBConfig())
 	if err != nil {
 		die("failed to open local database: %s", err)
 	}
@@ -299,7 +299,7 @@ func timeSearch(cb func() ([]byte, error)) {
 		}
 	}
 
-	if len(result.Aggregations.Stats.Buckets) > 0 {
+	if result.Aggregations != nil && len(result.Aggregations.Stats.Buckets) > 0 {
 		cliPrint("num aggs: %+v\n", len(result.Aggregations.Stats.Buckets))
 
 		if demoDebug {

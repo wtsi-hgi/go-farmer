@@ -31,13 +31,12 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/wtsi-hgi/go-farmer/db"
 	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
 	"gopkg.in/yaml.v3"
 )
 
 const (
-	defaultFileSize     = 32 * 1024 * 1024
-	defaultBufferSize   = 4 * 1024 * 1024
 	defaultCacheEntries = 128
 )
 
@@ -91,20 +90,12 @@ func (c *YAMLConfig) ToESConfig() es.Config {
 	}
 }
 
-func (c *YAMLConfig) FileSize() int {
-	if c.Farmer.RawFileSize > 0 {
-		return c.Farmer.RawFileSize
+func (c *YAMLConfig) ToDBConfig() db.Config {
+	return db.Config{
+		Directory:  c.Farmer.DatabaseDir,
+		FileSize:   c.Farmer.RawFileSize,
+		BufferSize: c.Farmer.RawBufferSize,
 	}
-
-	return defaultFileSize
-}
-
-func (c *YAMLConfig) BufferSize() int {
-	if c.Farmer.RawBufferSize > 0 {
-		return c.Farmer.RawBufferSize
-	}
-
-	return defaultBufferSize
 }
 
 func (c *YAMLConfig) CacheEntries() int {

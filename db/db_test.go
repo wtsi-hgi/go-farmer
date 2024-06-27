@@ -46,8 +46,9 @@ func TestDB(t *testing.T) {
 	Convey("Given a directory, you can make a new database", t, func() {
 		tmpDir := t.TempDir()
 		dbDir := filepath.Join(tmpDir, "db")
+		config := Config{Directory: dbDir, FileSize: fileSize, BufferSize: bufferSize}
 
-		db, err := New(dbDir, fileSize, bufferSize)
+		db, err := New(config)
 		So(err, ShouldBeNil)
 		So(db, ShouldNotBeNil)
 
@@ -200,7 +201,7 @@ func TestDB(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(retrieved.HitSet.Hits, ShouldBeNil)
 
-				db, err = New(dbDir, fileSize, bufferSize)
+				db, err = New(config)
 				So(err, ShouldBeNil)
 
 				retrieved, err = db.Scroll(query)
