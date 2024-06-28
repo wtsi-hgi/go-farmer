@@ -27,6 +27,7 @@ package elasticsearch
 
 import (
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -158,6 +159,50 @@ func TestDetails(t *testing.T) {
 		recovered, err = DeserializeDetails(detailBytes, []string{"WASTED_MB_SECONDS", "BOM"})
 		So(err, ShouldBeNil)
 		So(recovered, ShouldResemble, &Details{ID: expectedID, BOM: "bname", WastedMBSeconds: 7.2})
+
+		details = &Details{
+			ID:                strings.Repeat("a", 26),
+			AccountingName:    strings.Repeat("a", 24),
+			AvailCPUTimeSec:   0,
+			BOM:               strings.Repeat("b", 34),
+			Command:           strings.Repeat("cmd:", 1000),
+			JobName:           strings.Repeat("jname-", 2000),
+			Job:               strings.Repeat("job;", 3000),
+			MemRequestedMB:    1,
+			MemRequestedMBSec: 2,
+			NumExecProcs:      3,
+			PendingTimeSec:    4,
+			QueueName:         strings.Repeat("q", 22),
+			RunTimeSec:        5,
+			Timestamp:         6,
+			UserName:          strings.Repeat("u", 12),
+			WastedCPUSeconds:  7.1,
+			WastedMBSeconds:   7.2,
+		}
+
+		detailBytes, err = details.Serialize() //nolint:misspell
+		So(err, ShouldBeNil)
+		So(len(detailBytes), ShouldEqual, 7706)
+
+		recovered, err = DeserializeDetails(detailBytes, []string{})
+		So(err, ShouldBeNil)
+		So(recovered.ID, ShouldEqual, details.ID)
+		So(recovered.AccountingName, ShouldEqual, details.AccountingName)
+		So(recovered.BOM, ShouldEqual, details.BOM)
+		So(len(recovered.Command), ShouldEqual, maxFieldLength)
+		So(recovered.Command, ShouldStartWith, "cmd:cmd")
+		So(recovered.Command, ShouldEndWith, "cmd:cmd:")
+		So(recovered.Command, ShouldContainSubstring, truncationIndicator)
+		So(len(recovered.JobName), ShouldEqual, maxFieldLength)
+		So(recovered.JobName, ShouldStartWith, "jname-jname-")
+		So(recovered.JobName, ShouldEndWith, "jname-jname-")
+		So(recovered.JobName, ShouldContainSubstring, truncationIndicator)
+		So(len(recovered.Job), ShouldEqual, maxFieldLength)
+		So(recovered.Job, ShouldStartWith, "job;job;")
+		So(recovered.Job, ShouldEndWith, "job;job;")
+		So(recovered.Job, ShouldContainSubstring, truncationIndicator)
+		So(recovered.QueueName, ShouldEqual, details.QueueName)
+		So(recovered.UserName, ShouldEqual, details.UserName)
 	})
 }
 

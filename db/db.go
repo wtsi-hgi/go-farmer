@@ -53,7 +53,7 @@ const (
 	notInGPUQueue       = byte(1)
 	inGPUQueue          = byte(2)
 	lengthEncodeWidth   = 4
-	detailsBufferLength = 256 * 1024
+	detailsBufferLength = 16 * 1024
 	defaultFileSize     = 32 * 1024 * 1024
 	defaultBufferSize   = 4 * 1024 * 1024
 

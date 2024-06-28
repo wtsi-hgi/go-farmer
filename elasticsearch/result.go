@@ -29,11 +29,18 @@ package elasticsearch
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	bstd "github.com/deneonet/benc"
 	"github.com/deneonet/benc/bpre"
 	"github.com/elastic/go-elasticsearch/v7/esapi"
+)
+
+const (
+	maxFieldLength      = 2500
+	truncationIndicator = " [....] "
+	headTailLen         = (maxFieldLength / 2) - (len(truncationIndicator) / 2) //nolint:mnd
 )
 
 // Error is an error type that has a Msg with one of our const Err* messages.
@@ -168,7 +175,7 @@ type Details struct {
 	NumExecProcs      int `json:"NUM_EXEC_PROCS,omitempty"`
 	// NumberOfHosts                  int
 	// NumberOfUniqueHosts            int
-	PendingTimeSec int `json:"PENDING_TIME_SEC,omitempty"`
+	PendingTimeSec int `json:"PENDING_TIME_SEC"`
 	// PROJECT_NAME                   string
 	QueueName string `json:"QUEUE_NAME,omitempty"`
 	// RAW_AVG_MEM_EFFICIENCY_PERCENT float64
@@ -176,17 +183,19 @@ type Details struct {
 	// RAW_MAX_MEM_EFFICIENCY_PERCENT float64
 	// RAW_WASTED_CPU_SECONDS         float64
 	// RAW_WASTED_MB_SECONDS          float64
-	RunTimeSec int `json:"RUN_TIME_SEC,omitempty"`
+	RunTimeSec int `json:"RUN_TIME_SEC"`
 	// SUBMIT_TIME  int
 	Timestamp        int64   `json:"timestamp,omitempty"`
 	UserName         string  `json:"USER_NAME,omitempty"`
-	WastedCPUSeconds float64 `json:"WASTED_CPU_SECONDS,omitempty"`
-	WastedMBSeconds  float64 `json:"WASTED_MB_SECONDS,omitempty"`
+	WastedCPUSeconds float64 `json:"WASTED_CPU_SECONDS"`
+	WastedMBSeconds  float64 `json:"WASTED_MB_SECONDS"`
 }
 
 // Serialize converts a Details to a byte slice representation suitable for
 // storing on disk.
 func (d *Details) Serialize() ([]byte, error) { //nolint:funlen,misspell
+	d.headTailStrings()
+
 	n := bstd.SizeString(d.ID) //nolint:varnamelen
 	n += bstd.SizeString(d.AccountingName)
 	n += bstd.SizeInt()
@@ -229,6 +238,28 @@ func (d *Details) Serialize() ([]byte, error) { //nolint:funlen,misspell
 	err := bstd.VerifyMarshal(n, encoded)
 
 	return encoded, err
+}
+
+// headTailStrings reduces the length of our string values to a maximum length
+// by keeping only the start and end of them if too long. This means we can know
+// the max length of a Details and have an appropriate sized buffer and no
+// problems deserializing.
+func (d *Details) headTailStrings() {
+	if len(d.Command) > maxFieldLength {
+		d.Command = headTailString(d.Command)
+	}
+
+	if len(d.JobName) > maxFieldLength {
+		d.JobName = headTailString(d.JobName)
+	}
+
+	if len(d.Job) > maxFieldLength {
+		d.Job = headTailString(d.Job)
+	}
+}
+
+func headTailString(s string) string {
+	return s[0:headTailLen] + truncationIndicator + s[len(s)-headTailLen:]
 }
 
 // DeserializeDetails takes the output of Details.Serialize and converts it
@@ -421,6 +452,13 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 
 	if doField["JOB_NAME"] && details.JobName == "" {
 		details.JobName = "_"
+	}
+
+	if err != nil {
+		slog.Error("unmarhsal failed", "err", err, "encoded", string(encoded),
+			"attempt", details, "cmd_length", len(details.Command),
+			"jobname_length", len(details.JobName), "job_length", len(details.Job),
+			"encoded_length", len(encoded))
 	}
 
 	return details, err

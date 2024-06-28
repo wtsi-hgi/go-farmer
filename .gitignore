@@ -22,4 +22,5 @@ go.work
 go.work.sum
 
 config.yml
+config-prod.yml
 .farmer.boltdb
