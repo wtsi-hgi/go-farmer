@@ -171,7 +171,7 @@ type Details struct {
 	// MAX_MEM_USAGE_MB_SEC_COOKED    float64
 	// MAX_MEM_USAGE_MB_SEC_RAW       float64
 	MemRequestedMB    int `json:"MEM_REQUESTED_MB,omitempty"`
-	MemRequestedMBSec int `json:"MEM_REQUESTED_MB_SEC,omitempty"`
+	MemRequestedMBSec int `json:"MEM_REQUESTED_MB_SEC"`
 	NumExecProcs      int `json:"NUM_EXEC_PROCS,omitempty"`
 	// NumberOfHosts                  int
 	// NumberOfUniqueHosts            int
