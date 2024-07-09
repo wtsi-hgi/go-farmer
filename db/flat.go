@@ -27,7 +27,6 @@ package db
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -152,15 +151,13 @@ func scrollFlatFile(dbFilePath string, filter *flatFilter, result *es.Result, fi
 			break
 		}
 
-		if bytes.Compare(tsBuf, filter.LTEKey) > 0 {
+		check.LT(tsBuf)
+
+		if !check.Passes() {
 			break
 		}
 
-		check.Reset()
-
-		if bytes.Compare(tsBuf, filter.GTEKey) < 0 {
-			check.Fail()
-		}
+		check.GTE(tsBuf)
 
 		_, err = io.ReadFull(br, accBuf)
 		if err != nil {

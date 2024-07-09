@@ -213,23 +213,32 @@ func (q *Query) asBody() (*bytes.Reader, error) {
 	return bytes.NewReader(queryBytes), nil
 }
 
-// DateRange looks at the query's range->timestamp and returns the lte and gte
-// values. Returns an error if none were found.
-func (q *Query) DateRange() (lte time.Time, gte time.Time, err error) { //nolint:gocognit
+// DateRange looks at the query's range->timestamp and returns the lt, lte and
+// gte values. Returns an error if none were found.
+func (q *Query) DateRange() (lt, lte, gte time.Time, err error) { //nolint:gocognit,funlen,gocyclo
 	for _, val := range q.Query.Bool.Filter {
 		fRange, ok := val["range"]
 		if !ok {
 			continue
 		}
 
+		ltStr := fRange.GetMapString("timestamp", "lt")
 		lteStr := fRange.GetMapString("timestamp", "lte")
-		if lteStr == "" {
+
+		if ltStr == "" && lteStr == "" {
 			continue
 		}
 
-		lte, err = time.Parse(time.RFC3339, lteStr)
-		if err != nil {
-			return lte, gte, err
+		if ltStr != "" { //nolint:nestif
+			lt, err = time.Parse(time.RFC3339, ltStr)
+			if err != nil {
+				return lt, lte, gte, err
+			}
+		} else {
+			lte, err = time.Parse(time.RFC3339, lteStr)
+			if err != nil {
+				return lt, lte, gte, err
+			}
 		}
 
 		gteStr := fRange.GetMapString("timestamp", "gte")
@@ -239,13 +248,13 @@ func (q *Query) DateRange() (lte time.Time, gte time.Time, err error) { //nolint
 
 		gte, err = time.Parse(time.RFC3339, gteStr)
 		if err != nil {
-			return lte, gte, err
+			return lt, lte, gte, err
 		}
 
-		return lte, gte, err
+		return lt, lte, gte, err
 	}
 
-	return lte, gte, Error{Msg: ErrNoTimestampRange}
+	return lt, lte, gte, Error{Msg: ErrNoTimestampRange}
 }
 
 // Filters returns the match_phrase and prefix key value pairs found in the

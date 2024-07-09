@@ -37,8 +37,10 @@ const ErrNoBOM = "query does not specify a BOM"
 
 type flatFilter struct {
 	BOM             string
+	LT              time.Time
 	LTE             time.Time
 	GTE             time.Time
+	LTKey           []byte
 	LTEKey          []byte
 	GTEKey          []byte
 	accountingName  []byte
@@ -46,20 +48,23 @@ type flatFilter struct {
 	checkAccounting bool
 	checkUser       bool
 	checkGPU        bool
+	checkLTE        bool
 }
 
 func newFlatFilter(query *es.Query) (*flatFilter, error) {
-	lte, gte, err := query.DateRange()
+	lt, lte, gte, err := query.DateRange()
 	if err != nil {
 		return nil, err
 	}
 
 	filter := &flatFilter{
-		LTE: lte,
-		GTE: gte,
+		LT:       lt,
+		LTE:      lte,
+		GTE:      gte,
+		checkLTE: !lte.IsZero(),
 	}
 
-	filter.LTEKey, filter.GTEKey = i64tob(lte.Unix()), i64tob(gte.Unix())
+	filter.LTKey, filter.LTEKey, filter.GTEKey = i64tob(lt.Unix()), i64tob(lte.Unix()), i64tob(gte.Unix())
 	filter.BOM, filter.accountingName, filter.userName, filter.checkGPU = queryToFilters(query)
 
 	if filter.BOM == "" {
@@ -110,14 +115,31 @@ func (f *flatFilter) PassChecker() *passChecker {
 	return &passChecker{filter: f, passing: true}
 }
 
-// Reset should be used at the start of a loop, if re-using a passChecker.
-func (p *passChecker) Reset() {
-	p.passing = true
-}
-
 // Fail will cause Passes() to return false.
 func (p *passChecker) Fail() {
 	p.passing = false
+}
+
+// LT sees if the given timestamp is less than (or less than or equal to,
+// depending on what was set in the filter) the filter's LT/LTE value. This
+// should be the first method you use in a loop as it overrides Passes() return
+// value.
+func (p *passChecker) LT(timestamp []byte) {
+	if p.filter.checkLTE {
+		p.passing = bytes.Compare(timestamp, p.filter.LTEKey) <= 0
+	} else {
+		p.passing = bytes.Compare(timestamp, p.filter.LTKey) < 0
+	}
+}
+
+// GTE sees if the given timestamp is greater than or equal to the filter's GTE
+// value. Does nothing if we're already not passing.
+func (p *passChecker) GTE(timestamp []byte) {
+	if !p.passing {
+		return
+	}
+
+	p.passing = bytes.Compare(timestamp, p.filter.GTEKey) >= 0
 }
 
 // AccountingName sees if the given accounting name matches the filter's. Does

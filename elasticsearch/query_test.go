@@ -164,13 +164,15 @@ func TestQuery(t *testing.T) {
 		query, err := newQueryFromReader(strings.NewReader(testNonAggQuery))
 		So(err, ShouldBeNil)
 
-		lte, gte, err := query.DateRange()
+		lt, lte, gte, err := query.DateRange()
 		So(err, ShouldBeNil)
+		So(lt.IsZero(), ShouldBeTrue)
 		So(lte, ShouldEqual, expectedLTE)
 		So(gte, ShouldEqual, expectedGTE)
 
-		lte, gte, err = manualQuery.DateRange()
+		lt, lte, gte, err = manualQuery.DateRange()
 		So(err, ShouldBeNil)
+		So(lt.IsZero(), ShouldBeTrue)
 		So(lte, ShouldEqual, expectedLTE)
 		So(gte, ShouldEqual, expectedGTE)
 
@@ -178,8 +180,18 @@ func TestQuery(t *testing.T) {
 		query, err = newQueryFromReader(strings.NewReader(noRangeQuery))
 		So(err, ShouldBeNil)
 
-		_, _, err = query.DateRange()
+		_, _, _, err = query.DateRange()
 		So(err, ShouldNotBeNil)
+
+		ltQuery := `{"query":{"bool":{"filter":[{"range":{"timestamp":{"lt":"2024-05-04T00:10:00Z","gte":"2024-05-04T00:00:00Z","format":"strict_date_optional_time"}}}]}}}` //nolint:lll
+		query, err = newQueryFromReader(strings.NewReader(ltQuery))
+		So(err, ShouldBeNil)
+
+		lt, lte, gte, err = query.DateRange()
+		So(err, ShouldBeNil)
+		So(lt, ShouldEqual, expectedLTE)
+		So(lte.IsZero(), ShouldBeTrue)
+		So(gte, ShouldEqual, expectedGTE)
 	})
 
 	Convey("You can get the filters from a Query", t, func() {
