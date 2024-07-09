@@ -27,6 +27,8 @@ package db
 
 import (
 	"bytes"
+	"encoding/binary"
+	"fmt"
 	"strings"
 	"time"
 
@@ -127,9 +129,19 @@ func (p *passChecker) Fail() {
 func (p *passChecker) LT(timestamp []byte) {
 	if p.filter.checkLTE {
 		p.passing = bytes.Compare(timestamp, p.filter.LTEKey) <= 0
+		if !p.passing {
+			fmt.Printf("stopping because %s >= %s\n", tsbtfs(timestamp), tsbtfs(p.filter.LTEKey))
+		}
 	} else {
 		p.passing = bytes.Compare(timestamp, p.filter.LTKey) < 0
+		if !p.passing {
+			fmt.Printf("stopping because %s > %s\n", tsbtfs(timestamp), tsbtfs(p.filter.LTKey))
+		}
 	}
+}
+
+func tsbtfs(b []byte) string {
+	return time.Unix(int64(binary.BigEndian.Uint64(b)), 0).UTC().Format(time.RFC3339)
 }
 
 // GTE sees if the given timestamp is greater than or equal to the filter's GTE
@@ -140,6 +152,9 @@ func (p *passChecker) GTE(timestamp []byte) {
 	}
 
 	p.passing = bytes.Compare(timestamp, p.filter.GTEKey) >= 0
+	if !p.passing {
+		fmt.Printf("skipped because %s < %s\n", tsbtfs(timestamp), tsbtfs(p.filter.GTEKey))
+	}
 }
 
 // AccountingName sees if the given accounting name matches the filter's. Does

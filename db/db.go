@@ -300,8 +300,15 @@ func (d *DB) scrollRequestedDays(wg *sync.WaitGroup, filter *flatFilter, result 
 		}
 
 		currentDay = currentDay.Add(oneDay)
-		if currentDay.After(filter.LTE) {
-			break
+
+		if filter.checkLTE {
+			if currentDay.After(filter.LTE) {
+				break
+			}
+		} else {
+			if currentDay.Equal(filter.LT) || currentDay.After(filter.LT) {
+				break
+			}
 		}
 	}
 }

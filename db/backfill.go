@@ -25,7 +25,84 @@
 
 package db
 
-import "time"
+import (
+	"log/slog"
+	"os"
+	"time"
+
+	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
+)
+
+const (
+	ErrAlreadyExists = "database directory already exists"
+)
+
+// Scroller types have a Scroll function for querying something like elastic
+// search, automatically getting all hits in a single scroll call.
+type Scroller interface {
+	Scroll(query *es.Query) (*es.Result, error)
+}
+
+func Backfill(client Scroller, config Config, from time.Time, period time.Duration) (err error) {
+	if _, err = os.Stat(config.Directory); err == nil {
+		return Error{Msg: ErrAlreadyExists}
+	}
+
+	ldb, errn := New(config)
+	if errn != nil {
+		err = errn
+
+		return err
+	}
+
+	defer func() {
+		errc := ldb.Close()
+		if err == nil {
+			err = errc
+		}
+	}()
+
+	query := rangeQuery(from, period)
+
+	t := time.Now()
+
+	result, err := client.Scroll(query)
+	if err != nil {
+		return err
+	}
+
+	gte, lte := timestampRange(from, period)
+	slog.Info("search successful", "took", time.Since(t), "gte", gte, "lte", lte)
+	t = time.Now()
+
+	err = ldb.Store(result)
+	if err != nil {
+		return err
+	}
+
+	slog.Info("store successful", "took", time.Since(t))
+
+	return err
+}
+
+func rangeQuery(from time.Time, period time.Duration) *es.Query {
+	gte, lt := timestampRange(from, period)
+
+	return &es.Query{
+		Size: es.MaxSize,
+		Sort: []string{"timestamp", "_doc"},
+		Query: &es.QueryFilter{Bool: es.QFBool{Filter: es.Filter{
+			{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
+			{"range": map[string]interface{}{
+				"timestamp": map[string]string{
+					"lt":     lt,
+					"gte":    gte,
+					"format": "strict_date_optional_time",
+				},
+			}},
+		}}},
+	}
+}
 
 func timestampRange(from time.Time, period time.Duration) (string, string) {
 	y, m, d := from.Date()
