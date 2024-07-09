@@ -201,6 +201,7 @@ func getFixedWidthFields(hit es.Hit) ([]byte, []byte, byte, []byte, error) {
 	}
 
 	hit.Details.ID = hit.ID
+
 	encodedDetails, err := hit.Details.Serialize() //nolint:misspell
 	if err != nil {
 		return nil, nil, 0, nil, err
@@ -287,29 +288,28 @@ func (d *DB) scrollRequestedDays(wg *sync.WaitGroup, filter *flatFilter, result 
 		fileKey := currentDay.UTC().Format(dateFormat)
 		paths := d.dateBOMDirs[fmt.Sprintf("%s/%s/%s", d.dir, fileKey, filter.BOM)]
 
-		wg.Add(len(paths))
-
-		for _, path := range paths {
-			go func(dbFilePath string) {
-				defer wg.Done()
-
-				if err := scrollFlatFile(dbFilePath, filter, result, fields, d.bufferSize); err != nil {
-					result.AddError(err)
-				}
-			}(path)
-		}
+		d.scrollFlatFilesAndHandleErrors(wg, paths, filter, result, fields)
 
 		currentDay = currentDay.Add(oneDay)
 
-		if filter.checkLTE {
-			if currentDay.After(filter.LTE) {
-				break
-			}
-		} else {
-			if currentDay.Equal(filter.LT) || currentDay.After(filter.LT) {
-				break
-			}
+		if filter.beyondLastDate(currentDay) {
+			break
 		}
+	}
+}
+
+func (d *DB) scrollFlatFilesAndHandleErrors(wg *sync.WaitGroup, paths []string,
+	filter *flatFilter, result *es.Result, fields []string) {
+	wg.Add(len(paths))
+
+	for _, path := range paths {
+		go func(dbFilePath string) {
+			defer wg.Done()
+
+			if err := scrollFlatFile(dbFilePath, filter, result, fields, d.bufferSize); err != nil {
+				result.AddError(err)
+			}
+		}(path)
 	}
 }
 

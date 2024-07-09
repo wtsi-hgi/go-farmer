@@ -62,6 +62,10 @@ func Backfill(client Scroller, config Config, from time.Time, period time.Durati
 		}
 	}()
 
+	return queryElasticAndStoreLocally(client, ldb, from, period)
+}
+
+func queryElasticAndStoreLocally(client Scroller, ldb *DB, from time.Time, period time.Duration) error {
 	query := rangeQuery(from, period)
 
 	t := time.Now()
@@ -82,7 +86,7 @@ func Backfill(client Scroller, config Config, from time.Time, period time.Durati
 
 	slog.Info("store successful", "took", time.Since(t))
 
-	return err
+	return nil
 }
 
 func rangeQuery(from time.Time, period time.Duration) *es.Query {

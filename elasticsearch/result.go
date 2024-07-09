@@ -344,6 +344,7 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 	} else {
 		n, err = bstd.SkipString(n, encoded)
 	}
+
 	if err != nil {
 		return nil, err
 	}
