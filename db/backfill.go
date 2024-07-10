@@ -62,7 +62,22 @@ func Backfill(client Scroller, config Config, from time.Time, period time.Durati
 		}
 	}()
 
-	return queryElasticAndStoreLocally(client, ldb, from, period)
+	return backfillByDay(client, ldb, from, period)
+}
+
+func backfillByDay(client Scroller, ldb *DB, from time.Time, period time.Duration) error {
+	gte, lt := timeRange(from, period)
+
+	for !gte.After(lt) {
+		err := queryElasticAndStoreLocally(client, ldb, gte, oneDay)
+		if err != nil {
+			return err
+		}
+
+		gte = gte.Add(oneDay)
+	}
+
+	return nil
 }
 
 func queryElasticAndStoreLocally(client Scroller, ldb *DB, from time.Time, period time.Duration) error {
