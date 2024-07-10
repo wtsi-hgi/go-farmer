@@ -41,21 +41,21 @@ func TestBackfill(t *testing.T) {
 	from := time.Date(2024, 06, 1, 0, 30, 0, 0, time.UTC)
 
 	Convey("You can convert durations to timestamp ranges", t, func() {
-		gte, lte := timestampRange(from, 15*time.Minute)
-		So(gte, ShouldEqual, "2024-05-31T23:45:00Z")
-		So(lte, ShouldEqual, "2024-06-01T00:00:00Z")
+		gte, lte := timeRange(from, 15*time.Minute)
+		So(timestamp(gte), ShouldEqual, "2024-05-31T23:45:00Z")
+		So(timestamp(lte), ShouldEqual, "2024-06-01T00:00:00Z")
 
-		gte, lte = timestampRange(from, 2*time.Hour)
-		So(gte, ShouldEqual, "2024-05-31T22:00:00Z")
-		So(lte, ShouldEqual, "2024-06-01T00:00:00Z")
+		gte, lte = timeRange(from, 2*time.Hour)
+		So(timestamp(gte), ShouldEqual, "2024-05-31T22:00:00Z")
+		So(timestamp(lte), ShouldEqual, "2024-06-01T00:00:00Z")
 
-		gte, lte = timestampRange(from, 3*oneDay)
-		So(gte, ShouldEqual, "2024-05-29T00:00:00Z")
-		So(lte, ShouldEqual, "2024-06-01T00:00:00Z")
+		gte, lte = timeRange(from, 3*oneDay)
+		So(timestamp(gte), ShouldEqual, "2024-05-29T00:00:00Z")
+		So(timestamp(lte), ShouldEqual, "2024-06-01T00:00:00Z")
 
-		gte, lte = timestampRange(from, 730*time.Hour)
-		So(gte, ShouldEqual, "2024-05-01T00:00:00Z")
-		So(lte, ShouldEqual, "2024-06-01T00:00:00Z")
+		gte, lte = timeRange(from, 730*time.Hour)
+		So(timestamp(gte), ShouldEqual, "2024-05-01T00:00:00Z")
+		So(timestamp(lte), ShouldEqual, "2024-06-01T00:00:00Z")
 	})
 
 	period := (2 * 24) * time.Hour
@@ -122,7 +122,7 @@ func backfillTest(client Scroller, config Config, from time.Time, period time.Du
 	for _, bom := range []string{"Human Genetics", "Genomic Surveillance Unit",
 		"Tree of Life", "Cellular Genetics", "CASM", "Infection Genomics",
 		"Management Operations", "Open Targets", "Scientific Operations"} {
-		query := rangeQuery(from, period)
+		query := rangeQuery(timeRange(from, period))
 		query.Query.Bool.Filter = append(query.Query.Bool.Filter,
 			map[string]es.MapStringStringOrMap{"match_phrase": map[string]interface{}{"BOM": bom}})
 

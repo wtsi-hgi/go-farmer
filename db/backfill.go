@@ -66,7 +66,9 @@ func Backfill(client Scroller, config Config, from time.Time, period time.Durati
 }
 
 func queryElasticAndStoreLocally(client Scroller, ldb *DB, from time.Time, period time.Duration) error {
-	query := rangeQuery(from, period)
+	gte, lt := timeRange(from, period)
+
+	query := rangeQuery(gte, lt)
 
 	t := time.Now()
 
@@ -75,8 +77,7 @@ func queryElasticAndStoreLocally(client Scroller, ldb *DB, from time.Time, perio
 		return err
 	}
 
-	gte, lte := timestampRange(from, period)
-	slog.Info("search successful", "took", time.Since(t), "gte", gte, "lte", lte)
+	slog.Info("search successful", "took", time.Since(t), "gte", timestamp(gte), "lte", timestamp(lt))
 	t = time.Now()
 
 	err = ldb.Store(result)
@@ -89,26 +90,7 @@ func queryElasticAndStoreLocally(client Scroller, ldb *DB, from time.Time, perio
 	return nil
 }
 
-func rangeQuery(from time.Time, period time.Duration) *es.Query {
-	gte, lt := timestampRange(from, period)
-
-	return &es.Query{
-		Size: es.MaxSize,
-		Sort: []string{"timestamp", "_doc"},
-		Query: &es.QueryFilter{Bool: es.QFBool{Filter: es.Filter{
-			{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
-			{"range": map[string]interface{}{
-				"timestamp": map[string]string{
-					"lt":     lt,
-					"gte":    gte,
-					"format": "strict_date_optional_time",
-				},
-			}},
-		}}},
-	}
-}
-
-func timestampRange(from time.Time, period time.Duration) (string, string) {
+func timeRange(from time.Time, period time.Duration) (time.Time, time.Time) {
 	y, m, d := from.Date()
 	end := time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
 	start := end.Add(-period)
@@ -118,5 +100,26 @@ func timestampRange(from time.Time, period time.Duration) (string, string) {
 		start = time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
 	}
 
-	return start.Format(time.RFC3339), end.Format(time.RFC3339)
+	return start, end
+}
+
+func rangeQuery(from time.Time, to time.Time) *es.Query {
+	return &es.Query{
+		Size: es.MaxSize,
+		Sort: []string{"timestamp", "_doc"},
+		Query: &es.QueryFilter{Bool: es.QFBool{Filter: es.Filter{
+			{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
+			{"range": map[string]interface{}{
+				"timestamp": map[string]string{
+					"lt":     timestamp(to),
+					"gte":    timestamp(from),
+					"format": "strict_date_optional_time",
+				},
+			}},
+		}}},
+	}
+}
+
+func timestamp(t time.Time) string {
+	return t.Format(time.RFC3339)
 }
