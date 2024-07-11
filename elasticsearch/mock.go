@@ -69,7 +69,33 @@ const (
 			"total":{"value":2},
 			"hits": [
 				{"_id": "1", "_source": { "ACCOUNTING_NAME": "pathdev", "USER_NAME": "pathpipe", "QUEUE_NAME": "transfer" } },
-				{"_id": "2", "_source": { "ACCOUNTING_NAME": "a2", "USER_NAME": "u2", "QUEUE_NAME": "q2" } }
+                {"_id": "2", "_source": { "ACCOUNTING_NAME": "a2", "USER_NAME": "u2", "QUEUE_NAME": "q2" } }
+			]
+		}
+	}`
+	testNonAggQueryResponse0530 = `{
+		"hits": {
+			"total":{"value":2},
+			"hits": [
+				{"_id": "1", "_source": {
+					"BOM": "Human Genetics",
+					"ACCOUNTING_NAME": "pathdev",
+					"USER_NAME": "pathpipe",
+					"QUEUE_NAME": "transfer",
+					"timestamp": 1717027200 } }
+			]
+		}
+	}`
+	testNonAggQueryResponse0531 = `{
+		"hits": {
+			"total":{"value":2},
+			"hits": [
+				{"_id": "2", "_source": {
+					"BOM": "Human Genetics",
+					"ACCOUNTING_NAME": "a2",
+					"USER_NAME": "u2",
+					"QUEUE_NAME": "q2",
+					"timestamp": 1717113600 } }
 			]
 		}
 	}`
@@ -131,10 +157,14 @@ func (m mockTransport) RoundTrip(req *http.Request) (*http.Response, error) { //
 						}
 					}
 
-					if gte != "2024-05-03T15:00:00Z" {
-						jsonStr = testNonAggQueryResponseSize
-					} else {
+					if gte == "2024-05-03T15:00:00Z" {
 						jsonStr = m.scrollHits()
+					} else if gte == "2024-05-30T00:00:00Z" {
+						jsonStr = testNonAggQueryResponse0530
+					} else if gte == "2024-05-31T00:00:00Z" {
+						jsonStr = testNonAggQueryResponse0531
+					} else {
+						jsonStr = testNonAggQueryResponseSize
 					}
 				} else {
 					jsonStr = testNonAggQueryResponseSizeSources

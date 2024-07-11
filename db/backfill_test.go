@@ -61,13 +61,51 @@ func TestBackfill(t *testing.T) {
 
 	period := (2 * 24) * time.Hour
 
-	Convey("You can't Backfill() if the directory already exists", t, func() {
+	Convey("Given a mock elasticsearch client, db config and period, you can Backfill()", t, func() {
+		slog.SetLogLoggerLevel(slog.LevelWarn)
+
 		dir := t.TempDir()
 		mock := es.NewMock("some-indexes-*")
 		config := Config{Directory: dir}
 
 		err := Backfill(mock.Client(), config, from, period)
-		So(err, ShouldNotBeNil)
+		So(err, ShouldBeNil)
+
+		bom := "Human Genetics"
+		localPath30 := filepath.Join(dir, "2024", "05", "30", bom, "0")
+		localPath31 := filepath.Join(dir, "2024", "05", "31", bom, "0")
+
+		infoOrig, err := os.Stat(localPath30)
+		So(err, ShouldBeNil)
+
+		_, err = os.Stat(localPath31)
+		So(err, ShouldBeNil)
+
+		query := rangeQuery(timeRange(from, period))
+		query.Query.Bool.Filter = append(query.Query.Bool.Filter,
+			map[string]es.MapStringStringOrMap{"match_phrase": map[string]interface{}{"BOM": bom}})
+
+		db, err := New(config)
+		So(err, ShouldBeNil)
+
+		result, errs := db.Scroll(query)
+		So(errs, ShouldBeNil)
+		So(result.HitSet.Total.Value, ShouldEqual, 2)
+
+		Convey("Repeating Backfill() only stores missing days", func() {
+			err = os.RemoveAll(filepath.Dir(filepath.Dir(localPath31)))
+			So(err, ShouldBeNil)
+
+			err = Backfill(mock.Client(), config, from, period)
+			So(err, ShouldBeNil)
+
+			infoRepeat, err := os.Stat(localPath30)
+			So(err, ShouldBeNil)
+			So(infoRepeat.ModTime(), ShouldEqual, infoOrig.ModTime())
+
+			_, err = os.Stat(localPath31)
+			So(err, ShouldBeNil)
+		})
 	})
 
 	host := os.Getenv("FARMER_TEST_HOST")
@@ -103,11 +141,11 @@ func TestBackfill(t *testing.T) {
 		})
 		So(err, ShouldBeNil)
 
-		backfillTest(client, config, from, period)
+		realBackfillTest(client, config, from, period)
 	})
 }
 
-func backfillTest(client Scroller, config Config, from time.Time, period time.Duration) {
+func realBackfillTest(client Scroller, config Config, from time.Time, period time.Duration) {
 	var b strings.Builder
 
 	logger := slog.New(slog.NewTextHandler(&b, nil))
@@ -194,6 +232,17 @@ func backfillTest(client Scroller, config Config, from time.Time, period time.Du
 	result, err := db.Scroll(query)
 	So(err, ShouldBeNil)
 	So(result.HitSet.Total.Value, ShouldEqual, 0)
+
+	b.Reset()
+
+	err = Backfill(client, config, from, period)
+	So(err, ShouldBeNil)
+
+	logged = b.String()
+	So(logged, ShouldNotContainSubstring, "successful")
+
+	count = strings.Count(logged, "skip completed day")
+	So(count, ShouldEqual, 3)
 }
 
 func updateFirstLastHitTimestamp(result *es.Result, first, last *time.Time) {

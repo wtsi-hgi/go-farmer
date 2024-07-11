@@ -285,8 +285,7 @@ func (d *DB) scrollRequestedDays(wg *sync.WaitGroup, filter *flatFilter, result 
 	currentDay := filter.GTE
 
 	for {
-		fileKey := currentDay.UTC().Format(dateFormat)
-		paths := d.dateBOMDirs[fmt.Sprintf("%s/%s/%s", d.dir, fileKey, filter.BOM)]
+		paths := d.dateBOMDirs[filepath.Join(d.dateFolder(currentDay), filter.BOM)]
 
 		d.scrollFlatFilesAndHandleErrors(wg, paths, filter, result, fields)
 
@@ -296,6 +295,10 @@ func (d *DB) scrollRequestedDays(wg *sync.WaitGroup, filter *flatFilter, result 
 			break
 		}
 	}
+}
+
+func (d *DB) dateFolder(day time.Time) string {
+	return fmt.Sprintf("%s/%s", d.dir, day.UTC().Format(dateFormat))
 }
 
 func (d *DB) scrollFlatFilesAndHandleErrors(wg *sync.WaitGroup, paths []string,

@@ -48,10 +48,6 @@ type Scroller interface {
 }
 
 func Backfill(client Scroller, config Config, from time.Time, period time.Duration) (err error) {
-	if _, err = os.Stat(config.Directory); err == nil {
-		return Error{Msg: ErrAlreadyExists}
-	}
-
 	ldb, errn := New(config)
 	if errn != nil {
 		err = errn
@@ -90,6 +86,13 @@ func backfillByDay(client Scroller, ldb *DB, from time.Time, period time.Duratio
 
 func queryElasticAndStoreLocally(client Scroller, ldb *DB, from time.Time, period time.Duration) error {
 	gte, lt := timeRange(from, period)
+
+	_, err := os.Stat(ldb.dateFolder(gte))
+	if err == nil {
+		slog.Info("skip completed day", "gte", timestamp(gte), "lte", timestamp(lt))
+
+		return nil
+	}
 
 	query := rangeQuery(gte, lt)
 
