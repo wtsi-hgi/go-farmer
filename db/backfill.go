@@ -26,15 +26,19 @@
 package db
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"time"
 
 	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
 	ErrAlreadyExists = "database directory already exists"
+
+	maxSimultaneousBackfills = 16
 )
 
 // Scroller types have a Scroll function for querying something like elastic
@@ -68,16 +72,20 @@ func Backfill(client Scroller, config Config, from time.Time, period time.Durati
 func backfillByDay(client Scroller, ldb *DB, from time.Time, period time.Duration) error {
 	gte, lt := timeRange(from, period)
 
+	g, _ := errgroup.WithContext(context.Background())
+	g.SetLimit(maxSimultaneousBackfills)
+
 	for !gte.After(lt) {
-		err := queryElasticAndStoreLocally(client, ldb, gte, oneDay)
-		if err != nil {
-			return err
-		}
+		from := gte
+
+		g.Go(func() error {
+			return queryElasticAndStoreLocally(client, ldb, from, oneDay)
+		})
 
 		gte = gte.Add(oneDay)
 	}
 
-	return nil
+	return g.Wait()
 }
 
 func queryElasticAndStoreLocally(client Scroller, ldb *DB, from time.Time, period time.Duration) error {

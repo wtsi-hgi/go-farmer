@@ -30,6 +30,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -107,10 +108,38 @@ func TestBackfill(t *testing.T) {
 }
 
 func backfillTest(client Scroller, config Config, from time.Time, period time.Duration) {
-	slog.SetLogLoggerLevel(slog.LevelWarn)
+	var b strings.Builder
+
+	logger := slog.New(slog.NewTextHandler(&b, nil))
+	slog.SetDefault(logger)
 
 	err := Backfill(client, config, from, period)
 	So(err, ShouldBeNil)
+
+	logged := b.String()
+
+	expectedFirstLog := "gte=2024-05-30T00:00:00Z lte=2024-05-31T00:00:00Z"
+	expectedSecondLog := "gte=2024-05-31T00:00:00Z lte=2024-06-01T00:00:00Z"
+	expectedThirdLog := "gte=2024-05-29T00:00:00Z lte=2024-05-30T00:00:00Z"
+
+	count := strings.Count(logged, expectedFirstLog)
+	So(count, ShouldEqual, 1)
+
+	count = strings.Count(logged, expectedSecondLog)
+	So(count, ShouldEqual, 1)
+
+	count = strings.Count(logged, expectedThirdLog)
+	So(count, ShouldEqual, 1)
+
+	indexFirst := strings.Index(logged, expectedFirstLog)
+	indexSecond := strings.Index(logged, expectedSecondLog)
+	indexThird := strings.Index(logged, expectedThirdLog)
+
+	// these log tests assume the query times for the 3 different days remains
+	// similar relative to each other; this might not be true and the tests
+	// might break...
+	So(indexFirst, ShouldBeLessThan, indexSecond)
+	So(indexSecond, ShouldBeLessThan, indexThird)
 
 	db, err := New(config)
 	So(err, ShouldBeNil)
