@@ -116,6 +116,11 @@ func cliPrint(msg string, a ...interface{}) {
 	fmt.Fprintf(os.Stdout, msg, a...)
 }
 
+// info is a convenience to log a message at the Info level.
+func info(msg string, a ...interface{}) {
+	appLogger.Info(fmt.Sprintf(msg, a...))
+}
+
 // die is a convenience to log a message at the Error level and exit non zero.
 func die(msg string, a ...interface{}) {
 	appLogger.Error(fmt.Sprintf(msg, a...))

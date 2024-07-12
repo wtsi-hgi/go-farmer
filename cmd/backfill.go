@@ -72,10 +72,14 @@ to run it.
 			die("failed to create real elasticsearch client: %s", err)
 		}
 
-		err = db.Backfill(client, config.ToDBConfig(), time.Now(), period)
+		t := time.Now()
+
+		err = db.Backfill(client, config.ToDBConfig(), t, period)
 		if err != nil {
 			die("backfill failed: %s", err)
 		}
+
+		info("overall: %s", time.Since(t))
 	},
 }
 
