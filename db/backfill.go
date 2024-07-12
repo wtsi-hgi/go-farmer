@@ -29,6 +29,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 
 	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
@@ -39,6 +40,7 @@ const (
 	ErrAlreadyExists = "database directory already exists"
 
 	maxSimultaneousBackfills = 16
+	successBasename          = ".backfill_successful"
 )
 
 // Scroller types have a Scroll function for querying something like elastic
@@ -92,10 +94,12 @@ func backfillByDay(client Scroller, ldb *DB, from time.Time, period time.Duratio
 func queryElasticAndStoreLocally(client Scroller, ldb *DB, from time.Time, period time.Duration) error {
 	gte, lt := timeRange(from, period)
 
-	_, err := os.Stat(ldb.dateFolder(gte))
-	if err == nil {
-		slog.Info("skip completed day", "gte", timestamp(gte), "lte", timestamp(lt))
+	successPath, err := checkIfNeeded(ldb, gte)
+	if err != nil {
+		return err
+	}
 
+	if successPath == "" {
 		return nil
 	}
 
@@ -119,7 +123,7 @@ func queryElasticAndStoreLocally(client Scroller, ldb *DB, from time.Time, perio
 
 	slog.Info("store successful", "took", time.Since(t))
 
-	return nil
+	return recordSuccess(successPath)
 }
 
 func timeRange(from time.Time, period time.Duration) (time.Time, time.Time) {
@@ -133,6 +137,30 @@ func timeRange(from time.Time, period time.Duration) (time.Time, time.Time) {
 	}
 
 	return start, end
+}
+
+// checkIfNeeded returns the path of the success file you should create after
+// successfully storing the data for this day, if this day hasn't already been
+// done. So blank means skip.
+func checkIfNeeded(ldb *DB, day time.Time) (string, error) {
+	dir := ldb.dateFolder(day)
+	successPath := filepath.Join(dir, successBasename)
+
+	_, err := os.Stat(successPath)
+	if err == nil {
+		slog.Info("skip completed day", "gte", timestamp(day))
+
+		return "", nil
+	}
+
+	var returnErr error
+
+	_, err = os.Stat(dir)
+	if err == nil {
+		returnErr = os.RemoveAll(dir)
+	}
+
+	return successPath, returnErr
 }
 
 func rangeQuery(from time.Time, to time.Time) *es.Query {
@@ -154,4 +182,21 @@ func rangeQuery(from time.Time, to time.Time) *es.Query {
 
 func timestamp(t time.Time) string {
 	return t.Format(time.RFC3339)
+}
+
+// recordSuccess creates an empty sential file so that we know we stored a whole
+// day's hits. In case there were no hits for that day, we first make the
+// directory (otherwise DB.Store() would have made it).
+func recordSuccess(path string) error {
+	err := os.MkdirAll(filepath.Dir(path), dbDirPerms)
+	if err != nil {
+		return err
+	}
+
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+
+	return f.Close()
 }

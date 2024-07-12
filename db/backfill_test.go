@@ -75,10 +75,10 @@ func TestBackfill(t *testing.T) {
 		localPath30 := filepath.Join(dir, "2024", "05", "30", bom, "0")
 		localPath31 := filepath.Join(dir, "2024", "05", "31", bom, "0")
 
-		infoOrig, err := os.Stat(localPath30)
+		infoOrig30, err := os.Stat(localPath30)
 		So(err, ShouldBeNil)
 
-		_, err = os.Stat(localPath31)
+		infoOrig31, err := os.Stat(localPath31)
 		So(err, ShouldBeNil)
 
 		query := rangeQuery(timeRange(from, period))
@@ -101,10 +101,32 @@ func TestBackfill(t *testing.T) {
 
 			infoRepeat, err := os.Stat(localPath30)
 			So(err, ShouldBeNil)
-			So(infoRepeat.ModTime(), ShouldEqual, infoOrig.ModTime())
+			So(infoRepeat.ModTime(), ShouldEqual, infoOrig30.ModTime())
 
 			_, err = os.Stat(localPath31)
 			So(err, ShouldBeNil)
+		})
+
+		Convey("Repeating Backfill() handles potentially corrupt prior days by starting them from scratch", func() {
+			err = os.Remove(filepath.Join(filepath.Dir(filepath.Dir(localPath31)), successBasename))
+			So(err, ShouldBeNil)
+
+			extraPath := filepath.Join(filepath.Dir(localPath31), "1")
+			f, err := os.Create(extraPath)
+			So(err, ShouldBeNil)
+
+			err = f.Close()
+			So(err, ShouldBeNil)
+
+			err = Backfill(mock.Client(), config, from, period)
+			So(err, ShouldBeNil)
+
+			infoRepeat, err := os.Stat(localPath31)
+			So(err, ShouldBeNil)
+			So(infoRepeat.ModTime(), ShouldHappenAfter, infoOrig31.ModTime())
+
+			_, err = os.Stat(extraPath)
+			So(err, ShouldNotBeNil)
 		})
 	})
 
