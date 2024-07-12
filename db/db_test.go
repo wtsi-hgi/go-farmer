@@ -138,7 +138,7 @@ func TestDB(t *testing.T) {
 			So(string(b[nextFieldStart:nextFieldStart+accountingNameWidth]), ShouldEqual, "groupA                  ")
 
 			nextFieldStart += accountingNameWidth
-			So(string(b[nextFieldStart:nextFieldStart+userNameWidth]), ShouldEqual, "userA       ")
+			So(string(b[nextFieldStart:nextFieldStart+userNameWidth]), ShouldEqual, "userA        ")
 
 			nextFieldStart += userNameWidth
 			So(b[nextFieldStart:nextFieldStart+1], ShouldEqual, []byte{notInGPUQueue})

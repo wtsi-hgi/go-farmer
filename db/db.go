@@ -48,7 +48,7 @@ const (
 	timeStampWidth      = 8
 	bomWidth            = 34
 	accountingNameWidth = 24
-	userNameWidth       = 12
+	userNameWidth       = 13
 	gpuPrefix           = "gpu"
 	notInGPUQueue       = byte(1)
 	inGPUQueue          = byte(2)
