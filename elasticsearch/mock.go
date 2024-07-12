@@ -73,6 +73,7 @@ const (
 			]
 		}
 	}`
+	testNonAggQueryResponse0529 = `{"hits": {}}`
 	testNonAggQueryResponse0530 = `{
 		"hits": {
 			"total":{"value":2},
@@ -134,7 +135,7 @@ func (m mockTransport) RoundTrip(req *http.Request) (*http.Response, error) { //
 		}
 
 		if scrollRequest { //nolint:gocritic
-			jsonStr = m.scrollHits()
+			jsonStr = m.scrollHits(req.Method == http.MethodPost)
 		} else if query.Aggs != nil {
 			jsonStr = testAggQueryResponse
 		} else {
@@ -158,7 +159,9 @@ func (m mockTransport) RoundTrip(req *http.Request) (*http.Response, error) { //
 					}
 
 					if gte == "2024-05-03T15:00:00Z" {
-						jsonStr = m.scrollHits()
+						jsonStr = m.scrollHits(req.Method == http.MethodPost)
+					} else if gte == "2024-05-29T00:00:00Z" {
+						jsonStr = testNonAggQueryResponse0529
 					} else if gte == "2024-05-30T00:00:00Z" {
 						jsonStr = testNonAggQueryResponse0530
 					} else if gte == "2024-05-31T00:00:00Z" {
@@ -180,7 +183,13 @@ func (m mockTransport) RoundTrip(req *http.Request) (*http.Response, error) { //
 	}, nil
 }
 
-func (m mockTransport) scrollHits() string {
+func (m mockTransport) scrollHits(wasPost bool) string {
+	if !wasPost {
+		return `{
+			"hits": {}
+		}`
+	}
+
 	hitsToReturn := testScrollManyHitsNum - scrollHitsReturned
 	if hitsToReturn > MaxSize {
 		hitsToReturn = MaxSize

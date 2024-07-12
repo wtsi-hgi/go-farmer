@@ -47,6 +47,11 @@ type Scroller interface {
 	Scroll(query *es.Query) (*es.Result, error)
 }
 
+// Backfill uses the given client to request all hits from the end of the day
+// prior to the given from time to the start of the day period time before then.
+//
+// If the configured database directory already has any results for a particular
+// day, that day will be skipped.
 func Backfill(client Scroller, config Config, from time.Time, period time.Duration) (err error) {
 	ldb, errn := New(config)
 	if errn != nil {
@@ -104,6 +109,7 @@ func queryElasticAndStoreLocally(client Scroller, ldb *DB, from time.Time, perio
 	}
 
 	slog.Info("search successful", "took", time.Since(t), "gte", timestamp(gte), "lte", timestamp(lt))
+
 	t = time.Now()
 
 	err = ldb.Store(result)

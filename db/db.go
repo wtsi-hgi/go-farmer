@@ -36,7 +36,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/deneonet/benc/bpre"
+	"github.com/deneonet/benc"
 	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
 )
 
@@ -53,7 +53,6 @@ const (
 	notInGPUQueue       = byte(1)
 	inGPUQueue          = byte(2)
 	lengthEncodeWidth   = 4
-	detailsBufferLength = 16 * 1024
 	defaultFileSize     = 32 * 1024 * 1024
 	defaultBufferSize   = 4 * 1024 * 1024
 
@@ -90,8 +89,10 @@ type DB struct {
 	dir         string
 	fileSize    int
 	bufferSize  int
+	bufPool     *benc.BufPool
 	dbs         map[string]*flatDB
 	dateBOMDirs map[string][]string
+	mu          sync.Mutex
 }
 
 // New returns a DB that will create or use the database files in the configured
@@ -126,6 +127,7 @@ func New(config Config) (*DB, error) {
 		dir:         config.Directory,
 		fileSize:    fileSize,
 		bufferSize:  bufferSize,
+		bufPool:     benc.NewBufPool(benc.WithBufferSize(es.MaxEncodedDetailsLength)),
 		dbs:         make(map[string]*flatDB),
 		dateBOMDirs: dateBOMDirs,
 	}, nil
@@ -156,10 +158,8 @@ func findFlatFiles(dir string, dateBOMDirs map[string][]string) error {
 // NB: What you Store() with this DB will not be available to Scroll(). You will
 // need to Close() this DB and make a New() one to Scroll() the stored hits.
 func (d *DB) Store(result *es.Result) error {
-	bpre.Marshal(detailsBufferLength)
-
 	for _, hit := range result.HitSet.Hits {
-		group, user, isGPU, encodedDetails, err := getFixedWidthFields(hit)
+		group, user, isGPU, encodedDetails, err := d.getFixedWidthFields(hit)
 		if err != nil {
 			return err
 		}
@@ -184,7 +184,7 @@ func (d *DB) Store(result *es.Result) error {
 	return nil
 }
 
-func getFixedWidthFields(hit es.Hit) ([]byte, []byte, byte, []byte, error) {
+func (d *DB) getFixedWidthFields(hit es.Hit) ([]byte, []byte, byte, []byte, error) {
 	group, err := fixedWidthField(hit.Details.AccountingName, accountingNameWidth)
 	if err != nil {
 		return nil, nil, 0, nil, err
@@ -202,7 +202,7 @@ func getFixedWidthFields(hit es.Hit) ([]byte, []byte, byte, []byte, error) {
 
 	hit.Details.ID = hit.ID
 
-	encodedDetails, err := hit.Details.Serialize() //nolint:misspell
+	encodedDetails, err := hit.Details.Serialize(d.bufPool) //nolint:misspell
 	if err != nil {
 		return nil, nil, 0, nil, err
 	}
@@ -221,6 +221,9 @@ func fixedWidthField(str string, width int) ([]byte, error) {
 
 func (d *DB) createOrGetFlatDB(timeStamp int64, bom string) (*flatDB, error) {
 	key := fmt.Sprintf("%s/%s", time.Unix(timeStamp, 0).UTC().Format(dateFormat), bom)
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
 
 	fdb, ok := d.dbs[key]
 	if !ok {

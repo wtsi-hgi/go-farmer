@@ -176,11 +176,19 @@ func (c *Client) scrollUntilAllHitsReceived(result *Result) error {
 		return nil
 	}
 
+	previousNumHits := len(result.HitSet.Hits)
+
 	for keepScrolling := true; keepScrolling; keepScrolling = len(result.HitSet.Hits) < total {
 		err := c.scroll(result)
 		if err != nil {
 			return err
 		}
+
+		if len(result.HitSet.Hits) == previousNumHits {
+			break
+		}
+
+		previousNumHits = len(result.HitSet.Hits)
 	}
 
 	return nil

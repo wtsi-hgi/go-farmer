@@ -114,13 +114,13 @@ func TestDB(t *testing.T) {
 			dir = filepath.Join(dir, "bomA")
 			entries, err = os.ReadDir(dir)
 			So(err, ShouldBeNil)
-			So(len(entries), ShouldEqual, 14)
+			So(len(entries), ShouldEqual, 15)
 			So(entries[0].Type().IsRegular(), ShouldBeTrue)
 			So(entries[0].Name(), ShouldEqual, "0")
-			So(entries[13].Type().IsRegular(), ShouldBeTrue)
-			So(entries[13].Name(), ShouldEqual, "9")
-			So(entries[5].Type().IsRegular(), ShouldBeTrue)
-			So(entries[5].Name(), ShouldEqual, "13")
+			So(entries[14].Type().IsRegular(), ShouldBeTrue)
+			So(entries[14].Name(), ShouldEqual, "9")
+			So(entries[6].Type().IsRegular(), ShouldBeTrue)
+			So(entries[6].Name(), ShouldEqual, "14")
 
 			filePath := filepath.Join(dir, "0")
 			b, err := os.ReadFile(filePath)
@@ -145,7 +145,7 @@ func TestDB(t *testing.T) {
 
 			nextFieldStart++
 			detailsLen := int(binary.BigEndian.Uint32(b[nextFieldStart : nextFieldStart+lengthEncodeWidth]))
-			expectedDetailsLen := 119
+			expectedDetailsLen := 127
 			So(detailsLen, ShouldEqual, expectedDetailsLen)
 
 			nextFieldStart += lengthEncodeWidth
@@ -167,9 +167,9 @@ func TestDB(t *testing.T) {
 			dir = filepath.Join(dbDir, "2024", "02", "05", "bomA")
 			entries, err = os.ReadDir(dir)
 			So(err, ShouldBeNil)
-			So(len(entries), ShouldEqual, 14)
+			So(len(entries), ShouldEqual, 15)
 
-			filePath = filepath.Join(dir, "13")
+			filePath = filepath.Join(dir, "14")
 			b, err = os.ReadFile(filePath)
 			So(err, ShouldBeNil)
 

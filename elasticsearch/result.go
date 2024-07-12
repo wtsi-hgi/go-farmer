@@ -32,8 +32,8 @@ import (
 	"log/slog"
 	"sync"
 
-	bstd "github.com/deneonet/benc"
-	"github.com/deneonet/benc/bpre"
+	"github.com/deneonet/benc"
+	"github.com/deneonet/benc/bstd"
 	"github.com/elastic/go-elasticsearch/v7/esapi"
 )
 
@@ -41,6 +41,8 @@ const (
 	maxFieldLength      = 2500
 	truncationIndicator = " [....] "
 	headTailLen         = (maxFieldLength / 2) - (len(truncationIndicator) / 2) //nolint:mnd
+
+	MaxEncodedDetailsLength = 16 * 1024
 )
 
 // Error is an error type that has a Msg with one of our const Err* messages.
@@ -146,7 +148,7 @@ type Hit struct {
 type Details struct {
 	ID              string `json:"_id,omitempty"`
 	AccountingName  string `json:"ACCOUNTING_NAME,omitempty"`
-	AvailCPUTimeSec int    `json:"AVAIL_CPU_TIME_SEC,omitempty"`
+	AvailCPUTimeSec int64  `json:"AVAIL_CPU_TIME_SEC,omitempty"`
 	// AVG_MEM_EFFICIENCY_PERCENT     float64
 	// AVRG_MEM_USAGE_MB              float64
 	// AVRG_MEM_USAGE_MB_SEC_COOKED   float64
@@ -170,12 +172,12 @@ type Details struct {
 	// MAX_MEM_USAGE_MB               float64
 	// MAX_MEM_USAGE_MB_SEC_COOKED    float64
 	// MAX_MEM_USAGE_MB_SEC_RAW       float64
-	MemRequestedMB    int `json:"MEM_REQUESTED_MB,omitempty"`
-	MemRequestedMBSec int `json:"MEM_REQUESTED_MB_SEC"`
-	NumExecProcs      int `json:"NUM_EXEC_PROCS,omitempty"`
+	MemRequestedMB    int64 `json:"MEM_REQUESTED_MB,omitempty"`
+	MemRequestedMBSec int64 `json:"MEM_REQUESTED_MB_SEC"`
+	NumExecProcs      int64 `json:"NUM_EXEC_PROCS,omitempty"`
 	// NumberOfHosts                  int
 	// NumberOfUniqueHosts            int
-	PendingTimeSec int `json:"PENDING_TIME_SEC"`
+	PendingTimeSec int64 `json:"PENDING_TIME_SEC"`
 	// PROJECT_NAME                   string
 	QueueName string `json:"QUEUE_NAME,omitempty"`
 	// RAW_AVG_MEM_EFFICIENCY_PERCENT float64
@@ -183,7 +185,7 @@ type Details struct {
 	// RAW_MAX_MEM_EFFICIENCY_PERCENT float64
 	// RAW_WASTED_CPU_SECONDS         float64
 	// RAW_WASTED_MB_SECONDS          float64
-	RunTimeSec int `json:"RUN_TIME_SEC"`
+	RunTimeSec int64 `json:"RUN_TIME_SEC"`
 	// SUBMIT_TIME  int
 	Timestamp        int64   `json:"timestamp,omitempty"`
 	UserName         string  `json:"USER_NAME,omitempty"`
@@ -193,51 +195,109 @@ type Details struct {
 
 // Serialize converts a Details to a byte slice representation suitable for
 // storing on disk.
-func (d *Details) Serialize() ([]byte, error) { //nolint:funlen,misspell
+func (d *Details) Serialize(bufPool *benc.BufPool) ([]byte, error) { //nolint:funlen,misspell
 	d.headTailStrings()
 
-	n := bstd.SizeString(d.ID) //nolint:varnamelen
-	n += bstd.SizeString(d.AccountingName)
-	n += bstd.SizeInt()
-	n += bstd.SizeString(d.BOM)
-	n += bstd.SizeString(d.Command)
-	n += bstd.SizeString(d.JobName)
-	n += bstd.SizeString(d.Job)
-	n += bstd.SizeInt()
-	n += bstd.SizeInt()
-	n += bstd.SizeInt()
-	n += bstd.SizeInt()
-	n += bstd.SizeString(d.QueueName)
-	n += bstd.SizeInt()
-	n += bstd.SizeInt64()
-	n += bstd.SizeString(d.UserName)
-	n += bstd.SizeFloat64()
-	n += bstd.SizeFloat64()
+	var (
+		n   int
+		err error
+	)
 
-	bpre.Reset()
+	addSize(&n, &err, func() (int, error) { return bstd.SizeString(d.ID) })
+	addSize(&n, &err, func() (int, error) { return bstd.SizeString(d.AccountingName) })
+	addSize(&n, &err, func() (int, error) { return bstd.SizeInt64(), nil })
+	addSize(&n, &err, func() (int, error) { return bstd.SizeString(d.BOM) })
+	addSize(&n, &err, func() (int, error) { return bstd.SizeString(d.Command) })
+	addSize(&n, &err, func() (int, error) { return bstd.SizeString(d.JobName) })
+	addSize(&n, &err, func() (int, error) { return bstd.SizeString(d.Job) })
+	addSize(&n, &err, func() (int, error) { return bstd.SizeInt64(), nil })
+	addSize(&n, &err, func() (int, error) { return bstd.SizeInt64(), nil })
+	addSize(&n, &err, func() (int, error) { return bstd.SizeInt64(), nil })
+	addSize(&n, &err, func() (int, error) { return bstd.SizeInt64(), nil })
+	addSize(&n, &err, func() (int, error) { return bstd.SizeString(d.QueueName) })
+	addSize(&n, &err, func() (int, error) { return bstd.SizeInt64(), nil })
+	addSize(&n, &err, func() (int, error) { return bstd.SizeInt64(), nil })
+	addSize(&n, &err, func() (int, error) { return bstd.SizeString(d.UserName) })
+	addSize(&n, &err, func() (int, error) { return bstd.SizeFloat64(), nil })
+	addSize(&n, &err, func() (int, error) { return bstd.SizeFloat64(), nil })
 
-	n, encoded := bstd.Marshal(n)
-	n = bstd.MarshalString(n, encoded, d.ID)
-	n = bstd.MarshalString(n, encoded, d.AccountingName)
-	n = bstd.MarshalInt(n, encoded, d.AvailCPUTimeSec)
-	n = bstd.MarshalString(n, encoded, d.BOM)
-	n = bstd.MarshalString(n, encoded, d.Command)
-	n = bstd.MarshalString(n, encoded, d.JobName)
-	n = bstd.MarshalString(n, encoded, d.Job)
-	n = bstd.MarshalInt(n, encoded, d.MemRequestedMB)
-	n = bstd.MarshalInt(n, encoded, d.MemRequestedMBSec)
-	n = bstd.MarshalInt(n, encoded, d.NumExecProcs)
-	n = bstd.MarshalInt(n, encoded, d.PendingTimeSec)
-	n = bstd.MarshalString(n, encoded, d.QueueName)
-	n = bstd.MarshalInt(n, encoded, d.RunTimeSec)
-	n = bstd.MarshalInt64(n, encoded, d.Timestamp)
-	n = bstd.MarshalString(n, encoded, d.UserName)
-	n = bstd.MarshalFloat64(n, encoded, d.WastedCPUSeconds)
-	n = bstd.MarshalFloat64(n, encoded, d.WastedMBSeconds)
+	if err != nil {
+		return nil, err
+	}
 
-	err := bstd.VerifyMarshal(n, encoded)
+	buf, errm := bufPool.Marshal(n, func(encoded []byte) (n int) {
+		n, err = bstd.MarshalString(n, encoded, d.ID)
+		if err != nil {
+			return
+		}
 
-	return encoded, err
+		n, err = bstd.MarshalString(n, encoded, d.AccountingName)
+		if err != nil {
+			return
+		}
+
+		n = bstd.MarshalInt64(n, encoded, d.AvailCPUTimeSec)
+
+		n, err = bstd.MarshalString(n, encoded, d.BOM)
+		if err != nil {
+			return
+		}
+
+		n, err = bstd.MarshalString(n, encoded, d.Command)
+		if err != nil {
+			return
+		}
+
+		n, err = bstd.MarshalString(n, encoded, d.JobName)
+		if err != nil {
+			return
+		}
+
+		n, err = bstd.MarshalString(n, encoded, d.Job)
+		if err != nil {
+			return
+		}
+
+		n = bstd.MarshalInt64(n, encoded, d.MemRequestedMB)
+		n = bstd.MarshalInt64(n, encoded, d.MemRequestedMBSec)
+		n = bstd.MarshalInt64(n, encoded, d.NumExecProcs)
+		n = bstd.MarshalInt64(n, encoded, d.PendingTimeSec)
+
+		n, err = bstd.MarshalString(n, encoded, d.QueueName)
+		if err != nil {
+			return
+		}
+
+		n = bstd.MarshalInt64(n, encoded, d.RunTimeSec)
+		n = bstd.MarshalInt64(n, encoded, d.Timestamp)
+
+		n, err = bstd.MarshalString(n, encoded, d.UserName)
+		if err != nil {
+			return
+		}
+
+		n = bstd.MarshalFloat64(n, encoded, d.WastedCPUSeconds)
+		n = bstd.MarshalFloat64(n, encoded, d.WastedMBSeconds)
+
+		err = benc.VerifyMarshal(n, encoded)
+
+		return n
+	})
+
+	if errm != nil {
+		err = errm
+	}
+
+	return buf, err
+}
+
+func addSize(n *int, err *error, fn func() (int, error)) {
+	thisN, thisErr := fn()
+	if thisErr != nil {
+		*err = thisErr
+	}
+
+	*n += thisN
 }
 
 // headTailStrings reduces the length of our string values to a maximum length
@@ -300,9 +360,9 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 	}
 
 	if doAllFields || doField["AVAIL_CPU_TIME_SEC"] {
-		n, details.AvailCPUTimeSec, err = bstd.UnmarshalInt(n, encoded)
+		n, details.AvailCPUTimeSec, err = bstd.UnmarshalInt64(n, encoded)
 	} else {
-		n, err = bstd.SkipInt(n, encoded)
+		n, err = bstd.SkipInt64(n, encoded)
 	}
 
 	if err != nil {
@@ -350,9 +410,9 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 	}
 
 	if doAllFields || doField["MEM_REQUESTED_MB"] {
-		n, details.MemRequestedMB, err = bstd.UnmarshalInt(n, encoded)
+		n, details.MemRequestedMB, err = bstd.UnmarshalInt64(n, encoded)
 	} else {
-		n, err = bstd.SkipInt(n, encoded)
+		n, err = bstd.SkipInt64(n, encoded)
 	}
 
 	if err != nil {
@@ -360,9 +420,9 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 	}
 
 	if doAllFields || doField["MEM_REQUESTED_MB_SEC"] {
-		n, details.MemRequestedMBSec, err = bstd.UnmarshalInt(n, encoded)
+		n, details.MemRequestedMBSec, err = bstd.UnmarshalInt64(n, encoded)
 	} else {
-		n, err = bstd.SkipInt(n, encoded)
+		n, err = bstd.SkipInt64(n, encoded)
 	}
 
 	if err != nil {
@@ -370,9 +430,9 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 	}
 
 	if doAllFields || doField["NUM_EXEC_PROCS"] {
-		n, details.NumExecProcs, err = bstd.UnmarshalInt(n, encoded)
+		n, details.NumExecProcs, err = bstd.UnmarshalInt64(n, encoded)
 	} else {
-		n, err = bstd.SkipInt(n, encoded)
+		n, err = bstd.SkipInt64(n, encoded)
 	}
 
 	if err != nil {
@@ -380,9 +440,9 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 	}
 
 	if doAllFields || doField["PENDING_TIME_SEC"] {
-		n, details.PendingTimeSec, err = bstd.UnmarshalInt(n, encoded)
+		n, details.PendingTimeSec, err = bstd.UnmarshalInt64(n, encoded)
 	} else {
-		n, err = bstd.SkipInt(n, encoded)
+		n, err = bstd.SkipInt64(n, encoded)
 	}
 
 	if err != nil {
@@ -400,9 +460,9 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 	}
 
 	if doAllFields || doField["RUN_TIME_SEC"] {
-		n, details.RunTimeSec, err = bstd.UnmarshalInt(n, encoded)
+		n, details.RunTimeSec, err = bstd.UnmarshalInt64(n, encoded)
 	} else {
-		n, err = bstd.SkipInt(n, encoded)
+		n, err = bstd.SkipInt64(n, encoded)
 	}
 
 	if err != nil {
@@ -449,7 +509,7 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 		return nil, err
 	}
 
-	err = bstd.VerifyUnmarshal(n, encoded)
+	err = benc.VerifyUnmarshal(n, encoded)
 
 	if doField["JOB_NAME"] && details.JobName == "" {
 		details.JobName = "_"

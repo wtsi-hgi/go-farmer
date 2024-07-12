@@ -137,7 +137,7 @@ func scrollFlatFile(dbFilePath string, filter *flatFilter, result *es.Result, fi
 	accBuf := make([]byte, accountingNameWidth)
 	userBuf := make([]byte, userNameWidth)
 	lenBuf := make([]byte, lengthEncodeWidth)
-	detailsBuf := make([]byte, detailsBufferLength)
+	detailsBuf := make([]byte, es.MaxEncodedDetailsLength)
 	br := bufio.NewReaderSize(f, fileBufferSize)
 	check := filter.PassChecker()
 
