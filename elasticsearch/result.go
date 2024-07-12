@@ -173,11 +173,11 @@ type Details struct {
 	// MAX_MEM_USAGE_MB_SEC_COOKED    float64
 	// MAX_MEM_USAGE_MB_SEC_RAW       float64
 	MemRequestedMB    int64 `json:"MEM_REQUESTED_MB,omitempty"`
-	MemRequestedMBSec int64 `json:"MEM_REQUESTED_MB_SEC"`
+	MemRequestedMBSec int64 `json:"MEM_REQUESTED_MB_SEC,omitempty"`
 	NumExecProcs      int64 `json:"NUM_EXEC_PROCS,omitempty"`
 	// NumberOfHosts                  int
 	// NumberOfUniqueHosts            int
-	PendingTimeSec int64 `json:"PENDING_TIME_SEC"`
+	PendingTimeSec int64 `json:"PENDING_TIME_SEC,omitempty"`
 	// PROJECT_NAME                   string
 	QueueName string `json:"QUEUE_NAME,omitempty"`
 	// RAW_AVG_MEM_EFFICIENCY_PERCENT float64
@@ -185,12 +185,12 @@ type Details struct {
 	// RAW_MAX_MEM_EFFICIENCY_PERCENT float64
 	// RAW_WASTED_CPU_SECONDS         float64
 	// RAW_WASTED_MB_SECONDS          float64
-	RunTimeSec int64 `json:"RUN_TIME_SEC"`
+	RunTimeSec int64 `json:"RUN_TIME_SEC,omitempty"`
 	// SUBMIT_TIME  int
 	Timestamp        int64   `json:"timestamp,omitempty"`
 	UserName         string  `json:"USER_NAME,omitempty"`
-	WastedCPUSeconds float64 `json:"WASTED_CPU_SECONDS"`
-	WastedMBSeconds  float64 `json:"WASTED_MB_SECONDS"`
+	WastedCPUSeconds float64 `json:"WASTED_CPU_SECONDS,omitempty"`
+	WastedMBSeconds  float64 `json:"WASTED_MB_SECONDS,omitempty"`
 }
 
 // Serialize converts a Details to a byte slice representation suitable for
