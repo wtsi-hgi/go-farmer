@@ -111,31 +111,9 @@ func init() {
 	RootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", "config.yml", "config file")
 }
 
-// logToFile logs to the given file.
-func logToFile(path string) {
-	fh, err := log15.FileHandler(path, log15.LogfmtFormat())
-	if err != nil {
-		fh = log15.StderrHandler
-
-		warn("can't write to log file; logging to stderr instead (%s)", err)
-	}
-
-	appLogger.SetHandler(fh)
-}
-
 // cliPrint outputs the message to STDOUT.
 func cliPrint(msg string, a ...interface{}) {
 	fmt.Fprintf(os.Stdout, msg, a...)
-}
-
-// info is a convenience to log a message at the Info level.
-func info(msg string, a ...interface{}) {
-	appLogger.Info(fmt.Sprintf(msg, a...))
-}
-
-// warn is a convenience to log a message at the Warn level.
-func warn(msg string, a ...interface{}) {
-	appLogger.Warn(fmt.Sprintf(msg, a...))
 }
 
 // die is a convenience to log a message at the Error level and exit non zero.

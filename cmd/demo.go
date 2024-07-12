@@ -35,6 +35,12 @@ import (
 	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
 )
 
+const (
+	oneDay       = 24 * time.Hour
+	twoDays      = 2 * oneDay
+	overOneMonth = 40 * oneDay
+)
+
 var demoPeriod string
 var demoDebug bool
 
@@ -51,7 +57,7 @@ hits from elasticsearch and store them in the local database.
 If it exists, test queries will run to show performance of using the local
 database and in-memory caching.
 
-Optionally supply -p month to query 1 month of data, or -p days for 3 days.
+Optionally supply -p month to query 40 days of data, or -p days for 3 days.
 Default is -p mins for 10 minutes of data.
 `,
 	Run: func(_ *cobra.Command, _ []string) {
@@ -89,17 +95,13 @@ func demo(config *YAMLConfig, period int) { //nolint:funlen,gocognit,gocyclo
 		die("failed to create real elasticsearch client: %s", err)
 	}
 
-	cq, err := cache.New(client, client, config.CacheEntries())
-	if err != nil {
-		die("failed to create an LRU cache: %s", err)
-	}
+	if _, err = os.Stat(config.Farmer.DatabaseDir); err != nil {
+		err = initDB(client, config.ToDBConfig(), period)
+		if err != nil {
+			die("failed to create local database: %s", err)
+		}
 
-	dbDir := config.Farmer.DatabaseDir
-
-	dbExisted := false
-
-	if _, err = os.Stat(dbDir); err == nil {
-		dbExisted = true
+		return
 	}
 
 	ldb, err := db.New(config.ToDBConfig())
@@ -114,16 +116,10 @@ func demo(config *YAMLConfig, period int) { //nolint:funlen,gocognit,gocyclo
 		}
 	}()
 
-	if !dbExisted {
-		err = initDB(cq, ldb, period)
-		if err != nil {
-			die("failed to create local database: %s", err)
-		}
-
-		return
+	cq, err := cache.New(client, ldb, config.CacheEntries())
+	if err != nil {
+		die("failed to create an LRU cache: %s", err)
 	}
-
-	cq.Scroller = ldb
 
 	bomQuery := &es.Query{
 		Aggs: &es.Aggs{
@@ -134,7 +130,7 @@ func demo(config *YAMLConfig, period int) { //nolint:funlen,gocognit,gocyclo
 						{Field: "NUM_EXEC_PROCS"},
 						{Field: "Job"},
 					},
-					Size: 1000,
+					Size: es.MaxSize,
 				},
 				Aggs: map[string]es.AggsField{
 					"cpu_avail_sec": {
@@ -225,60 +221,33 @@ func demo(config *YAMLConfig, period int) { //nolint:funlen,gocognit,gocyclo
 	})
 }
 
-func initDB(cq *cache.CachedQuerier, db *db.DB, period int) error {
-	lte := "2024-06-10T00:00:00Z"
-	gte := "2024-05-01T00:00:00Z"
+func initDB(client *es.Client, config db.Config, p int) error {
+	var (
+		from   time.Time
+		period time.Duration
+		err    error
+	)
 
-	if period == 1 {
-		gte = "2024-06-09T23:50:00Z"
-	} else if period == 2 {
-		lte = "2024-06-04T00:00:00Z"
-		gte = "2024-06-02T00:00:00Z"
+	switch p {
+	case 1:
+		from, err = time.Parse(time.RFC3339, "2024-06-10T00:00:00Z")
+		period = oneDay
+	case 2:
+		from, err = time.Parse(time.RFC3339, "2024-06-04T00:00:00Z")
+		period = twoDays
+	default:
+		from, err = time.Parse(time.RFC3339, "2024-06-10T00:00:00Z")
+		period = overOneMonth
 	}
 
-	filter := es.Filter{
-		{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
-		{"range": map[string]interface{}{
-			"timestamp": map[string]string{
-				"lte":    lte,
-				"gte":    gte,
-				"format": "strict_date_optional_time",
-			},
-		}},
-	}
-
-	query := &es.Query{
-		Size:  es.MaxSize,
-		Sort:  []string{"timestamp", "_doc"},
-		Query: &es.QueryFilter{Bool: es.QFBool{Filter: filter}},
-	}
-
-	t := time.Now()
-
-	compressedResult, err := cq.Scroll(query)
 	if err != nil {
 		return err
 	}
 
-	cliPrint("search took: %s\n", time.Since(t))
-	t = time.Now()
-
-	result, err := cache.Decompress(compressedResult)
-	if err != nil {
-		return err
-	}
-
-	err = db.Store(result)
-	if err != nil {
-		return err
-	}
-
-	cliPrint("store took: %s\n", time.Since(t))
-
-	return nil
+	return db.Backfill(client, config, from, period)
 }
 
-func timeSearch(cb func() ([]byte, error)) {
+func timeSearch(cb func() ([]byte, error)) { //nolint:gocyclo
 	t := time.Now()
 
 	data, err := cb()

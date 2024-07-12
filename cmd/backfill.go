@@ -26,8 +26,6 @@
 package cmd
 
 import (
-	"fmt"
-	"os"
 	"regexp"
 	"strconv"
 	"time"
@@ -41,6 +39,7 @@ const (
 	hoursInDay   = 24
 	hoursInWeek  = hoursInDay * 7
 	hoursInMonth = 730
+	hoursInYear  = 8760
 )
 
 var backfillPeriod string
@@ -53,16 +52,30 @@ var backfillCmd = &cobra.Command{
 Supply a -c config.yml (see root command help for details), and a --period to
 backfill.
 
-If the configured database_dir already exists, this will fail.
+The configured directory will be created or updated by running a query to get
+all hits from the real configured elastic search from the previous midnight to
+the given period long ago. The hits will then be stored in database files in the
+dir. Days already present in the database directory will be skipped, so it is
+safe to eg. run:
 
-Otherwise, the directory will be created and a query run to get all hits from
-the real configured elastic search from the previous midnight to the given
-period long ago. The hits will then be stored in database files in the dir.
+farmer backfill -p 2d
+
+every day, to cover yourself if it failed on one day for example, or you forgot
+to run it.
 `,
 	Run: func(_ *cobra.Command, _ []string) {
 		config := ParseConfig()
 		period := parsePeriod(backfillPeriod)
-		backfill(config, period)
+
+		client, err := es.NewClient(config.ToESConfig())
+		if err != nil {
+			die("failed to create real elasticsearch client: %s", err)
+		}
+
+		err = db.Backfill(client, config.ToDBConfig(), time.Now(), period)
+		if err != nil {
+			die("backfill failed: %s", err)
+		}
 	},
 }
 
@@ -71,11 +84,11 @@ func init() {
 
 	// flags specific to this sub-command
 	backfillCmd.Flags().StringVarP(&backfillPeriod, "period", "p", "2m",
-		"period of time to pull hits for, eg. 1h for 1 hour, 2d for 2 day, 3w for 3 weeks or 4m for 4 months")
+		"period of time to pull hits for, eg. 1h for 1 hour, 2d for 2 day, 3w for 3 weeks, 4m for 4 months and 5y for 5 years") //nolint:lll
 }
 
 func parsePeriod(periodStr string) time.Duration {
-	durationRegex := regexp.MustCompile("[0-9]+[hdwm]")
+	durationRegex := regexp.MustCompile("[0-9]+[hdwmy]")
 
 	periodStr = durationRegex.ReplaceAllStringFunc(periodStr, func(d string) string {
 		num, err := strconv.ParseInt(d[:len(d)-1], 10, 64)
@@ -90,6 +103,8 @@ func parsePeriod(periodStr string) time.Duration {
 			num *= hoursInWeek
 		case 'm':
 			num *= hoursInMonth
+		case 'y':
+			num *= hoursInYear
 		}
 
 		return strconv.FormatInt(num, 10) + "h"
@@ -101,89 +116,4 @@ func parsePeriod(periodStr string) time.Duration {
 	}
 
 	return d
-}
-
-func backfill(config *YAMLConfig, period time.Duration) {
-	client, err := es.NewClient(config.ToESConfig())
-	if err != nil {
-		die("failed to create real elasticsearch client: %s", err)
-	}
-
-	err = realbackfill(client, config.ToDBConfig(), period)
-	if err != nil {
-		die("backfill failed: %s", err)
-	}
-}
-
-func realbackfill(client *es.Client, config db.Config, period time.Duration) (err error) {
-	gte, lte := timestampRange(period)
-
-	if _, err = os.Stat(config.Directory); err == nil {
-		err = fmt.Errorf("database directory [%s] already exists", config.Directory)
-
-		return err
-	}
-
-	ldb, errn := db.New(config)
-	if errn != nil {
-		err = errn
-
-		return err
-	}
-
-	defer func() {
-		errc := ldb.Close()
-		if err == nil {
-			err = errc
-		}
-	}()
-
-	filter := es.Filter{
-		{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
-		{"range": map[string]interface{}{
-			"timestamp": map[string]string{
-				"lte":    lte,
-				"gte":    gte,
-				"format": "strict_date_optional_time",
-			},
-		}},
-	}
-
-	query := &es.Query{
-		Size:  es.MaxSize,
-		Sort:  []string{"timestamp", "_doc"},
-		Query: &es.QueryFilter{Bool: es.QFBool{Filter: filter}},
-	}
-
-	t := time.Now()
-
-	result, err := client.Scroll(query)
-	if err != nil {
-		return err
-	}
-
-	cliPrint("search took: %s\n", time.Since(t))
-	t = time.Now()
-
-	err = ldb.Store(result)
-	if err != nil {
-		return err
-	}
-
-	cliPrint("store took: %s\n", time.Since(t))
-
-	return err
-}
-
-func timestampRange(period time.Duration) (string, string) {
-	y, m, d := time.Now().Date()
-	end := time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
-	start := end.Add(-period)
-
-	if period > hoursInDay*time.Hour {
-		y, m, d := start.Date()
-		start = time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
-	}
-
-	return start.Format(time.RFC3339), end.Format(time.RFC3339)
 }
