@@ -79,7 +79,7 @@ issues:
         - dupl
   max-issues-per-linter: 0
   max-same-issues: 0
-  # new-from-rev: main
+  new-from-rev: main
 
 linters:
   disable-all: true

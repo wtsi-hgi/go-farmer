@@ -158,15 +158,16 @@ func (m mockTransport) RoundTrip(req *http.Request) (*http.Response, error) { //
 						}
 					}
 
-					if gte == "2024-05-03T15:00:00Z" {
+					switch gte {
+					case "2024-05-03T15:00:00Z":
 						jsonStr = m.scrollHits(req.Method == http.MethodPost)
-					} else if gte == "2024-05-29T00:00:00Z" {
+					case "2024-05-29T00:00:00Z":
 						jsonStr = testNonAggQueryResponse0529
-					} else if gte == "2024-05-30T00:00:00Z" {
+					case "2024-05-30T00:00:00Z":
 						jsonStr = testNonAggQueryResponse0530
-					} else if gte == "2024-05-31T00:00:00Z" {
+					case "2024-05-31T00:00:00Z":
 						jsonStr = testNonAggQueryResponse0531
-					} else {
+					default:
 						jsonStr = testNonAggQueryResponseSize
 					}
 				} else {

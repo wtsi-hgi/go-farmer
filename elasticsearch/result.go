@@ -199,87 +199,34 @@ func (d *Details) Serialize(bufPool *benc.BufPool) ([]byte, error) { //nolint:fu
 	d.headTailStrings()
 
 	var (
-		n   int
-		err error
+		size int
+		err  error
 	)
 
-	addSize(&n, &err, func() (int, error) { return bstd.SizeString(d.ID) })
-	addSize(&n, &err, func() (int, error) { return bstd.SizeString(d.AccountingName) })
-	addSize(&n, &err, func() (int, error) { return bstd.SizeInt64(), nil })
-	addSize(&n, &err, func() (int, error) { return bstd.SizeString(d.BOM) })
-	addSize(&n, &err, func() (int, error) { return bstd.SizeString(d.Command) })
-	addSize(&n, &err, func() (int, error) { return bstd.SizeString(d.JobName) })
-	addSize(&n, &err, func() (int, error) { return bstd.SizeString(d.Job) })
-	addSize(&n, &err, func() (int, error) { return bstd.SizeInt64(), nil })
-	addSize(&n, &err, func() (int, error) { return bstd.SizeInt64(), nil })
-	addSize(&n, &err, func() (int, error) { return bstd.SizeInt64(), nil })
-	addSize(&n, &err, func() (int, error) { return bstd.SizeInt64(), nil })
-	addSize(&n, &err, func() (int, error) { return bstd.SizeString(d.QueueName) })
-	addSize(&n, &err, func() (int, error) { return bstd.SizeInt64(), nil })
-	addSize(&n, &err, func() (int, error) { return bstd.SizeInt64(), nil })
-	addSize(&n, &err, func() (int, error) { return bstd.SizeString(d.UserName) })
-	addSize(&n, &err, func() (int, error) { return bstd.SizeFloat64(), nil })
-	addSize(&n, &err, func() (int, error) { return bstd.SizeFloat64(), nil })
+	addSize(&size, &err, func() (int, error) { return bstd.SizeString(d.ID) })
+	addSize(&size, &err, func() (int, error) { return bstd.SizeString(d.AccountingName) })
+	addSize(&size, &err, func() (int, error) { return bstd.SizeInt64(), nil })
+	addSize(&size, &err, func() (int, error) { return bstd.SizeString(d.BOM) })
+	addSize(&size, &err, func() (int, error) { return bstd.SizeString(d.Command) })
+	addSize(&size, &err, func() (int, error) { return bstd.SizeString(d.JobName) })
+	addSize(&size, &err, func() (int, error) { return bstd.SizeString(d.Job) })
+	addSize(&size, &err, func() (int, error) { return bstd.SizeInt64(), nil })
+	addSize(&size, &err, func() (int, error) { return bstd.SizeInt64(), nil })
+	addSize(&size, &err, func() (int, error) { return bstd.SizeInt64(), nil })
+	addSize(&size, &err, func() (int, error) { return bstd.SizeInt64(), nil })
+	addSize(&size, &err, func() (int, error) { return bstd.SizeString(d.QueueName) })
+	addSize(&size, &err, func() (int, error) { return bstd.SizeInt64(), nil })
+	addSize(&size, &err, func() (int, error) { return bstd.SizeInt64(), nil })
+	addSize(&size, &err, func() (int, error) { return bstd.SizeString(d.UserName) })
+	addSize(&size, &err, func() (int, error) { return bstd.SizeFloat64(), nil })
+	addSize(&size, &err, func() (int, error) { return bstd.SizeFloat64(), nil })
 
 	if err != nil {
 		return nil, err
 	}
 
-	buf, errm := bufPool.Marshal(n, func(encoded []byte) (n int) {
-		n, err = bstd.MarshalString(n, encoded, d.ID)
-		if err != nil {
-			return
-		}
-
-		n, err = bstd.MarshalString(n, encoded, d.AccountingName)
-		if err != nil {
-			return
-		}
-
-		n = bstd.MarshalInt64(n, encoded, d.AvailCPUTimeSec)
-
-		n, err = bstd.MarshalString(n, encoded, d.BOM)
-		if err != nil {
-			return
-		}
-
-		n, err = bstd.MarshalString(n, encoded, d.Command)
-		if err != nil {
-			return
-		}
-
-		n, err = bstd.MarshalString(n, encoded, d.JobName)
-		if err != nil {
-			return
-		}
-
-		n, err = bstd.MarshalString(n, encoded, d.Job)
-		if err != nil {
-			return
-		}
-
-		n = bstd.MarshalInt64(n, encoded, d.MemRequestedMB)
-		n = bstd.MarshalInt64(n, encoded, d.MemRequestedMBSec)
-		n = bstd.MarshalInt64(n, encoded, d.NumExecProcs)
-		n = bstd.MarshalInt64(n, encoded, d.PendingTimeSec)
-
-		n, err = bstd.MarshalString(n, encoded, d.QueueName)
-		if err != nil {
-			return
-		}
-
-		n = bstd.MarshalInt64(n, encoded, d.RunTimeSec)
-		n = bstd.MarshalInt64(n, encoded, d.Timestamp)
-
-		n, err = bstd.MarshalString(n, encoded, d.UserName)
-		if err != nil {
-			return
-		}
-
-		n = bstd.MarshalFloat64(n, encoded, d.WastedCPUSeconds)
-		n = bstd.MarshalFloat64(n, encoded, d.WastedMBSeconds)
-
-		err = benc.VerifyMarshal(n, encoded)
+	buf, errm := bufPool.Marshal(size, func(encoded []byte) (n int) {
+		n, err = d.marshal(encoded)
 
 		return n
 	})
@@ -291,13 +238,72 @@ func (d *Details) Serialize(bufPool *benc.BufPool) ([]byte, error) { //nolint:fu
 	return buf, err
 }
 
-func addSize(n *int, err *error, fn func() (int, error)) {
-	thisN, thisErr := fn()
+func addSize(size *int, err *error, fn func() (int, error)) {
+	thisSize, thisErr := fn()
 	if thisErr != nil {
 		*err = thisErr
 	}
 
-	*n += thisN
+	*size += thisSize
+}
+
+func (d *Details) marshal(encoded []byte) (int, error) { //nolint:funlen,gocyclo
+	n, err := bstd.MarshalString(0, encoded, d.ID)
+	if err != nil {
+		return n, err
+	}
+
+	n, err = bstd.MarshalString(n, encoded, d.AccountingName)
+	if err != nil {
+		return n, err
+	}
+
+	n = bstd.MarshalInt64(n, encoded, d.AvailCPUTimeSec)
+
+	n, err = bstd.MarshalString(n, encoded, d.BOM)
+	if err != nil {
+		return n, err
+	}
+
+	n, err = bstd.MarshalString(n, encoded, d.Command)
+	if err != nil {
+		return n, err
+	}
+
+	n, err = bstd.MarshalString(n, encoded, d.JobName)
+	if err != nil {
+		return n, err
+	}
+
+	n, err = bstd.MarshalString(n, encoded, d.Job)
+	if err != nil {
+		return n, err
+	}
+
+	n = bstd.MarshalInt64(n, encoded, d.MemRequestedMB)
+	n = bstd.MarshalInt64(n, encoded, d.MemRequestedMBSec)
+	n = bstd.MarshalInt64(n, encoded, d.NumExecProcs)
+	n = bstd.MarshalInt64(n, encoded, d.PendingTimeSec)
+
+	n, err = bstd.MarshalString(n, encoded, d.QueueName)
+	if err != nil {
+		return n, err
+	}
+
+	n = bstd.MarshalInt64(n, encoded, d.RunTimeSec)
+	n = bstd.MarshalInt64(n, encoded, d.Timestamp)
+
+	n, err = bstd.MarshalString(n, encoded, d.UserName)
+	if err != nil {
+		return n, err
+	}
+
+	n = bstd.MarshalFloat64(n, encoded, d.WastedCPUSeconds)
+	n = bstd.MarshalFloat64(n, encoded, d.WastedMBSeconds)
+
+	err = benc.VerifyMarshal(n, encoded)
+
+	return n, err
 }
 
 // headTailStrings reduces the length of our string values to a maximum length

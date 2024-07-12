@@ -77,10 +77,33 @@ func (e Error) Error() string {
 	return e.Msg
 }
 
+// Config us used to configure a DB. At least Directory must be specified, which
+// is the directory path you want to store the local database files, or where
+// they are already stored.
 type Config struct {
 	Directory  string
 	FileSize   int
 	BufferSize int
+}
+
+// FileSizeOrDefault returns our FileSize value, unless that is 0, in which
+// case it returns a sensible default value (32MB).
+func (c Config) FileSizeOrDefault() int {
+	if c.FileSize == 0 {
+		return defaultFileSize
+	}
+
+	return c.FileSize
+}
+
+// BufferSizeOrDefault returns our BufferSize value, unless that is 0, in which
+// case it returns a sensible default value (4MB).
+func (c Config) BufferSizeOrDefault() int {
+	if c.BufferSize == 0 {
+		return defaultBufferSize
+	}
+
+	return c.BufferSize
 }
 
 // DB represents a local database that uses a number of flat files to store
@@ -113,20 +136,10 @@ func New(config Config) (*DB, error) {
 		return nil, err
 	}
 
-	fileSize := config.FileSize
-	if fileSize == 0 {
-		fileSize = defaultFileSize
-	}
-
-	bufferSize := config.BufferSize
-	if bufferSize == 0 {
-		bufferSize = defaultBufferSize
-	}
-
 	return &DB{
 		dir:         config.Directory,
-		fileSize:    fileSize,
-		bufferSize:  bufferSize,
+		fileSize:    config.FileSizeOrDefault(),
+		bufferSize:  config.BufferSizeOrDefault(),
 		bufPool:     benc.NewBufPool(benc.WithBufferSize(es.MaxEncodedDetailsLength)),
 		dbs:         make(map[string]*flatDB),
 		dateBOMDirs: dateBOMDirs,
