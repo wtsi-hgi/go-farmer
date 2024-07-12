@@ -225,17 +225,7 @@ func (d *Details) Serialize(bufPool *benc.BufPool) ([]byte, error) { //nolint:fu
 		return nil, err
 	}
 
-	buf, errm := bufPool.Marshal(size, func(encoded []byte) (n int) {
-		n, err = d.marshal(encoded)
-
-		return n
-	})
-
-	if errm != nil {
-		err = errm
-	}
-
-	return buf, err
+	return d.marshal(size)
 }
 
 func addSize(size *int, err *error, fn func() (int, error)) {
@@ -247,37 +237,39 @@ func addSize(size *int, err *error, fn func() (int, error)) {
 	*size += thisSize
 }
 
-func (d *Details) marshal(encoded []byte) (int, error) { //nolint:funlen,gocyclo
-	n, err := bstd.MarshalString(0, encoded, d.ID)
+func (d *Details) marshal(size int) ([]byte, error) { //nolint:funlen,gocyclo
+	n, encoded := benc.Marshal(size)
+
+	n, err := bstd.MarshalString(n, encoded, d.ID)
 	if err != nil {
-		return n, err
+		return nil, err
 	}
 
 	n, err = bstd.MarshalString(n, encoded, d.AccountingName)
 	if err != nil {
-		return n, err
+		return nil, err
 	}
 
 	n = bstd.MarshalInt64(n, encoded, d.AvailCPUTimeSec)
 
 	n, err = bstd.MarshalString(n, encoded, d.BOM)
 	if err != nil {
-		return n, err
+		return nil, err
 	}
 
 	n, err = bstd.MarshalString(n, encoded, d.Command)
 	if err != nil {
-		return n, err
+		return nil, err
 	}
 
 	n, err = bstd.MarshalString(n, encoded, d.JobName)
 	if err != nil {
-		return n, err
+		return nil, err
 	}
 
 	n, err = bstd.MarshalString(n, encoded, d.Job)
 	if err != nil {
-		return n, err
+		return nil, err
 	}
 
 	n = bstd.MarshalInt64(n, encoded, d.MemRequestedMB)
@@ -287,7 +279,7 @@ func (d *Details) marshal(encoded []byte) (int, error) { //nolint:funlen,gocyclo
 
 	n, err = bstd.MarshalString(n, encoded, d.QueueName)
 	if err != nil {
-		return n, err
+		return nil, err
 	}
 
 	n = bstd.MarshalInt64(n, encoded, d.RunTimeSec)
@@ -295,7 +287,7 @@ func (d *Details) marshal(encoded []byte) (int, error) { //nolint:funlen,gocyclo
 
 	n, err = bstd.MarshalString(n, encoded, d.UserName)
 	if err != nil {
-		return n, err
+		return nil, err
 	}
 
 	n = bstd.MarshalFloat64(n, encoded, d.WastedCPUSeconds)
@@ -303,7 +295,7 @@ func (d *Details) marshal(encoded []byte) (int, error) { //nolint:funlen,gocyclo
 
 	err = benc.VerifyMarshal(n, encoded)
 
-	return n, err
+	return encoded, err
 }
 
 // headTailStrings reduces the length of our string values to a maximum length
@@ -516,16 +508,15 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 	}
 
 	err = benc.VerifyUnmarshal(n, encoded)
-
-	if doField["JOB_NAME"] && details.JobName == "" {
-		details.JobName = "_"
-	}
-
 	if err != nil {
 		slog.Error("unmarhsal failed", "err", err, "encoded", string(encoded),
 			"attempt", details, "cmd_length", len(details.Command),
 			"jobname_length", len(details.JobName), "job_length", len(details.Job),
-			"encoded_length", len(encoded))
+			"encoded_length", len(encoded), "n", n)
+	}
+
+	if doField["JOB_NAME"] && details.JobName == "" {
+		details.JobName = "_"
 	}
 
 	return details, err
