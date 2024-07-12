@@ -18,11 +18,19 @@ install:
 	@echo installed to ${GOPATH}/bin/farmer
 
 test: export CGO_ENABLED = 0
+test: export GOFARMER_SLOWTESTS = 0
 test:
 	@go test -tags netgo --count 1 .
 	@go test -tags netgo --count 1 $(shell go list ./... | tail -n+2)
 
+testslow: export CGO_ENABLED = 0
+testslow: export GOFARMER_SLOWTESTS = 1
+testslow:
+	@go test -tags netgo --count 1 .
+	@go test -tags netgo --count 1 $(shell go list ./... | tail -n+2)
+
 race: export CGO_ENABLED = 1
+race: export GOFARMER_SLOWTESTS = 1
 race:
 	@go test -tags netgo -race --count 1 .
 	@go test -tags netgo -race --count 1 $(shell go list ./... | tail -n+2)
@@ -48,4 +56,4 @@ clean:
 # 	github-release upload --tag ${TAG} --name farmer-linux-x86-64.zip --file linux-dist.zip
 # 	@rm -f farmer linux-dist.zip
 
-.PHONY: test race bench lint build install clean dist
+.PHONY: test testslow race bench lint build install clean dist

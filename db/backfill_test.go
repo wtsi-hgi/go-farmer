@@ -108,6 +108,13 @@ func TestBackfill(t *testing.T) {
 		})
 	})
 
+	doSlow := os.Getenv("GOFARMER_SLOWTESTS")
+	if doSlow != "1" {
+		SkipConvey("Skipping real elasticsearch tests without GOFARMER_SLOWTESTS=1", t, func() {})
+
+		return
+	}
+
 	host := os.Getenv("FARMER_TEST_HOST")
 	username := os.Getenv("FARMER_TEST_USERNAME")
 	password := os.Getenv("FARMER_TEST_PASSWORD")
