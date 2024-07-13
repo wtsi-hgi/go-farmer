@@ -29,6 +29,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"log/slog"
+	"time"
 
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/klauspost/compress/gzip"
@@ -88,10 +90,13 @@ func (c *CachedQuerier) wrapWithCache(querier querier, query *es.Query) ([]byte,
 		return compressed, nil
 	}
 
+	t := time.Now()
 	result, err := querier(query)
 	if err != nil {
 		return nil, err
 	}
+
+	slog.Debug("actual query", "took", time.Since(t))
 
 	compressed, err = compress(result)
 	if err != nil {
@@ -104,10 +109,14 @@ func (c *CachedQuerier) wrapWithCache(querier querier, query *es.Query) ([]byte,
 }
 
 func compress(result *es.Result) ([]byte, error) {
+	t := time.Now()
 	j, err := json.Marshal(result)
 	if err != nil {
 		return nil, err
 	}
+
+	slog.Debug("json.Marshal", "took", time.Since(t))
+	t = time.Now()
 
 	buf := bytes.Buffer{}
 	gz := gzip.NewWriter(&buf)
@@ -115,6 +124,8 @@ func compress(result *es.Result) ([]byte, error) {
 	_, err = gz.Write(j)
 
 	gz.Close()
+
+	slog.Debug("json compression", "took", time.Since(t))
 
 	return buf.Bytes(), err
 }
@@ -128,6 +139,7 @@ func (c *CachedQuerier) Scroll(query *es.Query) ([]byte, error) {
 // Decompress takes the output of CachedQuerier.Search() or Scroll() and turns
 // it back in to a Result.
 func Decompress(data []byte) (*es.Result, error) {
+	t := time.Now()
 	gr, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
 		return nil, err
@@ -140,8 +152,13 @@ func Decompress(data []byte) (*es.Result, error) {
 
 	gr.Close()
 
+	slog.Debug("json decompression", "took", time.Since(t))
+	t = time.Now()
+
 	result := &es.Result{}
 	err = json.Unmarshal(data, result)
+
+	slog.Debug("json.Unmarshal", "took", time.Since(t))
 
 	return result, err
 }

@@ -26,6 +26,7 @@
 package cmd
 
 import (
+	"log/slog"
 	"os"
 	"time"
 
@@ -75,6 +76,10 @@ Default is -p mins for 10 minutes of data.
 			die("invalid period supplied")
 		}
 
+		if demoDebug {
+			slog.SetLogLoggerLevel(slog.LevelDebug)
+		}
+
 		demo(config, period)
 	},
 }
@@ -96,10 +101,13 @@ func demo(config *YAMLConfig, period int) { //nolint:funlen,gocognit,gocyclo
 	}
 
 	if _, err = os.Stat(config.Farmer.DatabaseDir); err != nil {
+		t := time.Now()
 		err = initDB(client, config.ToDBConfig(), period)
 		if err != nil {
 			die("failed to create local database: %s", err)
 		}
+
+		info("Creating local database took %s", time.Since(t))
 
 		return
 	}
@@ -255,10 +263,15 @@ func timeSearch(cb func() ([]byte, error)) { //nolint:gocyclo
 		die("error searching: %s", err)
 	}
 
+	cliPrint("search took: %s\n", time.Since(t))
+	t = time.Now()
+
 	result, err := cache.Decompress(data)
 	if err != nil {
 		die("error decompressing: %s", err)
 	}
+
+	cliPrint("decompress took: %s\n", time.Since(t))
 
 	if len(result.HitSet.Hits) > 0 {
 		cliPrint("num hits: %+v\n", len(result.HitSet.Hits))
@@ -276,5 +289,5 @@ func timeSearch(cb func() ([]byte, error)) { //nolint:gocyclo
 		}
 	}
 
-	cliPrint("took: %s\n\n", time.Since(t))
+	cliPrint("\n")
 }
