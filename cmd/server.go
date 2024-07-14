@@ -56,7 +56,8 @@ Aggregation query results will come from an in-memory cached version of what the
 configured real elastic server returns.
 
 Scroll search query results will come from an in-memory cached version of what
-the configured local database returns.
+the configured local database returns. That local database will check every hour
+for any new files added by you running the backfill command.
 
 All other requests will be served by the real elastic server, with this server
 acting as a transparent proxy. (Except for /_search/scroll queries, which return

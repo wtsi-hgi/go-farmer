@@ -30,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,16 +46,17 @@ const (
 
 	dbDirPerms = 0770
 
-	timeStampWidth      = 8
-	bomWidth            = 34
-	accountingNameWidth = 24
-	userNameWidth       = 13
-	gpuPrefix           = "gpu"
-	notInGPUQueue       = byte(1)
-	inGPUQueue          = byte(2)
-	lengthEncodeWidth   = 4
-	defaultFileSize     = 32 * 1024 * 1024
-	defaultBufferSize   = 4 * 1024 * 1024
+	timeStampWidth         = 8
+	bomWidth               = 34
+	accountingNameWidth    = 24
+	userNameWidth          = 13
+	gpuPrefix              = "gpu"
+	notInGPUQueue          = byte(1)
+	inGPUQueue             = byte(2)
+	lengthEncodeWidth      = 4
+	defaultFileSize        = 32 * 1024 * 1024
+	defaultBufferSize      = 4 * 1024 * 1024
+	defaultUpdateFrequency = 1 * time.Hour
 
 	oneDay = 24 * time.Hour
 
@@ -81,9 +83,10 @@ func (e Error) Error() string {
 // is the directory path you want to store the local database files, or where
 // they are already stored.
 type Config struct {
-	Directory  string
-	FileSize   int
-	BufferSize int
+	Directory       string
+	FileSize        int           // FileSize defaults to 32MB
+	BufferSize      int           // BufferSize defaults to 4MB
+	UpdateFrequency time.Duration // UpdateFrequency defaults to 1hr
 }
 
 // FileSizeOrDefault returns our FileSize value, unless that is 0, in which
@@ -106,62 +109,143 @@ func (c Config) BufferSizeOrDefault() int {
 	return c.BufferSize
 }
 
+// UpdateFrequencyOrDefault returns our UpdateFrequency value, unless that is 0,
+// in which case it returns a sensible default value (1 hour).
+func (c Config) UpdateFrequencyOrDefault() time.Duration {
+	if c.UpdateFrequency == 0 {
+		return defaultUpdateFrequency
+	}
+
+	return c.UpdateFrequency
+}
+
 // DB represents a local database that uses a number of flat files to store
 // elasticsearch hit details and return them quickly.
 type DB struct {
-	dir         string
-	fileSize    int
-	bufferSize  int
-	bufPool     *benc.BufPool
-	dbs         map[string]*flatDB
-	dateBOMDirs map[string][]string
-	mu          sync.Mutex
+	dir             string
+	fileSize        int
+	bufferSize      int
+	bufPool         *benc.BufPool
+	dbs             map[string]*flatDB
+	dateBOMDirs     map[string][]string
+	updateFrequency time.Duration
+	latestDate      time.Time
+	stopMonitoring  chan bool
+	mu              sync.RWMutex
 }
 
 // New returns a DB that will create or use the database files in the configured
 // Directory. Files created will be split if they get over the configured
 // FileSize in bytes (default 32MB). Files will be read and written using a
-// BufferSize buffer in bytes (default 4MB).
+// configured BufferSize buffer in bytes (default 4MB).
+//
+// For the purpose of a continuously running server that uses the returned DB,
+// and for when you're separately Backfill()ing the database directory every
+// day, the configured UpdateFrequency is used to update the DB's knowledge of
+// available local database files, so that queries will make use of any added
+// data over time. This defaults to checking for new files ever hour.
 func New(config Config) (*DB, error) {
-	dateBOMDirs := make(map[string][]string)
+	db := &DB{
+		dir:             config.Directory,
+		fileSize:        config.FileSizeOrDefault(),
+		bufferSize:      config.BufferSizeOrDefault(),
+		bufPool:         benc.NewBufPool(benc.WithBufferSize(es.MaxEncodedDetailsLength)),
+		dbs:             make(map[string]*flatDB),
+		dateBOMDirs:     make(map[string][]string),
+		updateFrequency: config.UpdateFrequencyOrDefault(),
+	}
 
 	_, err := os.Stat(config.Directory)
 	if err == nil {
-		err = findFlatFiles(config.Directory, dateBOMDirs)
+		err = db.findAllFlatFiles(db.dir)
+		if err == nil {
+			db.monitorFlatFiles()
+		}
 	} else {
 		err = os.MkdirAll(config.Directory, dbDirPerms)
 	}
 
-	if err != nil {
-		return nil, err
-	}
-
-	return &DB{
-		dir:         config.Directory,
-		fileSize:    config.FileSizeOrDefault(),
-		bufferSize:  config.BufferSizeOrDefault(),
-		bufPool:     benc.NewBufPool(benc.WithBufferSize(es.MaxEncodedDetailsLength)),
-		dbs:         make(map[string]*flatDB),
-		dateBOMDirs: dateBOMDirs,
-	}, nil
+	return db, err
 }
 
-func findFlatFiles(dir string, dateBOMDirs map[string][]string) error {
-	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+func (d *DB) findAllFlatFiles(dir string) error {
+	return filepath.WalkDir(dir, func(path string, de fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 
-		if !d.Type().IsRegular() {
+		if !de.Type().IsRegular() || de.Name() == successBasename {
 			return nil
 		}
 
 		subDir := filepath.Dir(path)
 
-		dateBOMDirs[subDir] = append(dateBOMDirs[subDir], path)
+		d.mu.Lock()
+		defer d.mu.Unlock()
 
-		return nil
+		d.dateBOMDirs[subDir] = append(d.dateBOMDirs[subDir], path)
+
+		return d.updateLatestDate(filepath.Dir(subDir))
 	})
+}
+
+func (d *DB) updateLatestDate(dateDir string) error {
+	dateStr, err := filepath.Rel(d.dir, dateDir)
+	if err != nil {
+		return err
+	}
+
+	date, err := time.Parse(dateFormat, dateStr)
+	if err != nil {
+		return err
+	}
+
+	if date.After(d.latestDate) {
+		d.latestDate = date
+	}
+
+	return nil
+}
+
+func (d *DB) monitorFlatFiles() {
+	ticker := time.NewTicker(d.updateFrequency)
+	d.stopMonitoring = make(chan bool)
+
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				d.findLatestFlatFiles()
+			case <-d.stopMonitoring:
+				ticker.Stop()
+
+				return
+			}
+		}
+	}()
+}
+
+func (d *DB) findLatestFlatFiles() {
+	currentDay := d.latestDate.Add(oneDay)
+	maxDay := time.Now()
+
+	for {
+		dateFolder := d.dateFolder(currentDay)
+
+		_, err := os.Stat(dateFolder)
+		if err == nil {
+			err = d.findAllFlatFiles(dateFolder)
+			if err != nil {
+				slog.Error("findLatestFlatFiles failed", "err", err)
+			}
+		}
+
+		currentDay = currentDay.Add(oneDay)
+
+		if currentDay.After(maxDay) {
+			break
+		}
+	}
 }
 
 // Store stores the Details in the Hits of the given Result in flat database
@@ -301,7 +385,9 @@ func (d *DB) scrollRequestedDays(wg *sync.WaitGroup, filter *flatFilter, result 
 	currentDay := filter.GTE
 
 	for {
+		d.mu.RLock()
 		paths := d.dateBOMDirs[filepath.Join(d.dateFolder(currentDay), filter.BOM)]
+		d.mu.RUnlock()
 
 		d.scrollFlatFilesAndHandleErrors(wg, paths, filter, result, fields)
 
@@ -339,6 +425,10 @@ func (d *DB) Close() error {
 		if err := fdb.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
 			return err
 		}
+	}
+
+	if d.stopMonitoring != nil {
+		d.stopMonitoring <- true
 	}
 
 	return nil

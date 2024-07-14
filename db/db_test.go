@@ -38,15 +38,20 @@ import (
 )
 
 const (
-	fileSize   = 512 * 1024
-	bufferSize = 256 * 1024
+	fileSize        = 512 * 1024
+	bufferSize      = 256 * 1024
+	updateFrequency = 50 * time.Millisecond
 )
 
 func TestDB(t *testing.T) {
 	Convey("Given a directory, you can make a new database", t, func() {
 		tmpDir := t.TempDir()
 		dbDir := filepath.Join(tmpDir, "db")
-		config := Config{Directory: dbDir, FileSize: fileSize, BufferSize: bufferSize}
+		config := Config{
+			Directory:  dbDir,
+			FileSize:   fileSize,
+			BufferSize: bufferSize,
+		}
 
 		db, err := New(config)
 		So(err, ShouldBeNil)
@@ -107,11 +112,13 @@ func TestDB(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(len(entries), ShouldEqual, 2)
 			So(entries[0].IsDir(), ShouldBeTrue)
-			So(entries[0].Name(), ShouldEqual, "bomA")
+
+			bomA := "bomA"
+			So(entries[0].Name(), ShouldEqual, bomA)
 			So(entries[1].IsDir(), ShouldBeTrue)
 			So(entries[1].Name(), ShouldEqual, "bomB")
 
-			dir = filepath.Join(dir, "bomA")
+			dir = filepath.Join(dir, bomA)
 			entries, err = os.ReadDir(dir)
 			So(err, ShouldBeNil)
 			So(len(entries), ShouldEqual, 15)
@@ -164,7 +171,7 @@ func TestDB(t *testing.T) {
 			stamp = timeStampBytesToFormatString(b[nextFieldStart : nextFieldStart+timeStampWidth])
 			So(stamp, ShouldEqual, "2024-02-04T00:00:03Z")
 
-			dir = filepath.Join(dbDir, "2024", "02", "05", "bomA")
+			dir = filepath.Join(dbDir, "2024", "02", "05", bomA)
 			entries, err = os.ReadDir(dir)
 			So(err, ShouldBeNil)
 			So(len(entries), ShouldEqual, 15)
@@ -196,7 +203,7 @@ func TestDB(t *testing.T) {
 				_, err = db.Scroll(query)
 				So(err, ShouldNotBeNil)
 
-				bomMatch := map[string]es.MapStringStringOrMap{"match_phrase": map[string]interface{}{"BOM": "bomA"}}
+				bomMatch := map[string]es.MapStringStringOrMap{"match_phrase": map[string]interface{}{"BOM": bomA}}
 				query.Query.Bool.Filter = append(query.Query.Bool.Filter, bomMatch)
 				retrieved, err := db.Scroll(query)
 				So(err, ShouldBeNil)
@@ -282,6 +289,40 @@ func TestDB(t *testing.T) {
 				So(retrieved.HitSet.Hits[0].Details.UserName, ShouldNotBeBlank)
 				So(retrieved.HitSet.Hits[0].Details.AccountingName, ShouldBeBlank)
 			})
+
+			Convey("A DB's knowledge of available flat files updates over time", func() {
+				config.UpdateFrequency = updateFrequency
+				db, err = New(config)
+				So(err, ShouldBeNil)
+
+				db.mu.RLock()
+				So(len(db.dateBOMDirs), ShouldEqual, 4)
+				db.mu.RUnlock()
+
+				febDir := filepath.Join(dbDir, "2024", "02")
+				olderFile := filepath.Join(febDir, "03", bomA, "0")
+				newerFile := filepath.Join(febDir, "08", bomA, "0")
+				today := time.Now().Format(dateFormat)
+				newestFile := filepath.Join(dbDir, today, bomA, "0")
+
+				err = makeFiles(olderFile, newerFile, newestFile)
+				So(err, ShouldBeNil)
+
+				<-time.After(config.UpdateFrequencyOrDefault() * 2)
+				db.mu.RLock()
+				defer db.mu.RUnlock()
+
+				So(len(db.dateBOMDirs), ShouldEqual, 6)
+
+				_, ok := db.dateBOMDirs[filepath.Dir(olderFile)]
+				So(ok, ShouldBeFalse)
+
+				_, ok = db.dateBOMDirs[filepath.Dir(newerFile)]
+				So(ok, ShouldBeTrue)
+
+				_, ok = db.dateBOMDirs[filepath.Dir(newestFile)]
+				So(ok, ShouldBeTrue)
+			})
 		})
 	})
 }
@@ -352,4 +393,25 @@ func makeResult(gte, lte time.Time) *es.Result {
 
 func timeStampBytesToFormatString(b []byte) string {
 	return time.Unix(int64(binary.BigEndian.Uint64(b)), 0).UTC().Format(time.RFC3339)
+}
+
+func makeFiles(paths ...string) error {
+	for _, path := range paths {
+		err := os.MkdirAll(filepath.Dir(path), dbDirPerms)
+		if err != nil {
+			return err
+		}
+
+		f, err := os.Create(path)
+		if err != nil {
+			return err
+		}
+
+		err = f.Close()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
