@@ -59,7 +59,7 @@ type Query struct {
 
 // Aggs is used to specify an aggregation query.
 type Aggs struct {
-	Stats AggsStats `json:"stats"`
+	Stats interface{} `json:"stats"`
 }
 
 type AggsStats struct {
