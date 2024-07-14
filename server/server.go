@@ -67,7 +67,7 @@ type Server struct {
 //
 // To start a webserver, do something like:
 //
-//	s := New(sc, &url.URL{Host: "domain:port", Scheme: "http"})
+//	s := New(sc, "index", &url.URL{Host: "domain:port", Scheme: "http"})
 //	http.ListenAndServe(80, s)
 func New(sc SearchScroller, index string, proxyTarget *url.URL) *Server {
 	proxy := httputil.NewSingleHostReverseProxy(proxyTarget)
