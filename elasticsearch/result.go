@@ -31,10 +31,10 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/bytedance/sonic"
 	"github.com/deneonet/benc"
 	"github.com/deneonet/benc/bstd"
 	"github.com/elastic/go-elasticsearch/v7/esapi"
+	easyjson "github.com/mailru/easyjson"
 )
 
 const (
@@ -539,7 +539,7 @@ func parseResultResponse(resp *esapi.Response) (*Result, error) {
 
 	var result Result
 
-	if err := sonic.ConfigDefault.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := easyjson.UnmarshalFromReader(resp.Body, &result); err != nil {
 		return nil, err
 	}
 
