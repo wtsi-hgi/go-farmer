@@ -28,13 +28,16 @@ package cache
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"time"
 
 	lru "github.com/hashicorp/golang-lru/v2"
-	"github.com/klauspost/compress/gzip"
 	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
+)
+
+const (
+	cacheKeyPrefixResults = "r."
+	cacheKeyPrefixStrings = "s."
 )
 
 // Searcher types have a Search function for querying something like elastic
@@ -44,15 +47,17 @@ type Searcher interface {
 }
 
 // Scroller types have a Scroll function for querying something like elastic
-// search, automatically getting all hits in a single scroll call.
+// search, automatically getting all hits in a single scroll call. They also
+// have a Usernames function that returns just the usernames from the hits.
 type Scroller interface {
 	Scroll(query *es.Query) (*es.Result, error)
+	Usernames(query *es.Query) ([]string, error)
 }
 
-type querier func(query *es.Query) (*es.Result, error)
+type querier func(query *es.Query) ([]byte, error)
 
 // CachedQuerier is an LRU cache wrapper around a Searcher and a Scroller that
-// stores and returns their Results as compressed JSON.
+// stores and returns their Results as JSON.
 type CachedQuerier struct {
 	Searcher Searcher
 	Scroller Scroller
@@ -61,8 +66,8 @@ type CachedQuerier struct {
 
 // New returns a CachedQuerier that takes a Searcher and a Scroller. It caches
 // cacheSize Search() and Scroll() queries, evicting the least recently used
-// query results once the cache is full. It stores and returns compressed JSON
-// of the Results.
+// query results once the cache is full. It stores and returns JSON encoding of
+// the Results.
 func New(searcher Searcher, scroller Scroller, cacheSize int) (*CachedQuerier, error) {
 	l, err := lru.New[string, []byte](cacheSize)
 	if err != nil {
@@ -77,86 +82,114 @@ func New(searcher Searcher, scroller Scroller, cacheSize int) (*CachedQuerier, e
 }
 
 // Search returns any cached data for the given query, otherwise returns the
-// compressed JSON result of calling our Searcher.Search().
+// JSON result of calling our Searcher.Search().
 func (c *CachedQuerier) Search(query *es.Query) ([]byte, error) {
-	return c.wrapWithCache(c.Searcher.Search, query)
+	return c.wrapWithCache(cacheKeyPrefixResults, query, c.searchQuerier)
 }
 
-func (c *CachedQuerier) wrapWithCache(querier querier, query *es.Query) ([]byte, error) {
-	cacheKey := query.Key()
+func (c *CachedQuerier) wrapWithCache(keyPrefix string, query *es.Query, querier querier) ([]byte, error) {
+	cacheKey := keyPrefix + query.Key()
 
-	compressed, ok := c.lru.Get(cacheKey)
+	jsonBytes, ok := c.lru.Get(cacheKey)
 	if ok {
-		return compressed, nil
+		return jsonBytes, nil
 	}
 
-	t := time.Now()
-	result, err := querier(query)
+	jsonBytes, err := querier(query)
 	if err != nil {
 		return nil, err
 	}
 
-	slog.Debug("actual query", "took", time.Since(t))
+	c.lru.Add(cacheKey, jsonBytes)
 
-	compressed, err = compress(result)
-	if err != nil {
-		return nil, err
-	}
-
-	c.lru.Add(cacheKey, compressed)
-
-	return compressed, nil
+	return jsonBytes, nil
 }
 
-func compress(result *es.Result) ([]byte, error) {
+func (c *CachedQuerier) searchQuerier(query *es.Query) ([]byte, error) {
 	t := time.Now()
-	j, err := json.Marshal(result)
+
+	result, err := c.Searcher.Search(query)
 	if err != nil {
 		return nil, err
 	}
 
-	slog.Debug("json.Marshal", "took", time.Since(t))
-	t = time.Now()
+	slog.Debug("search query", "took", time.Since(t))
 
-	buf := bytes.Buffer{}
-	gz := gzip.NewWriter(&buf)
+	return resultToJSON(result)
+}
 
-	_, err = gz.Write(j)
+func resultToJSON(result *es.Result) ([]byte, error) {
+	t := time.Now()
+	jsonBytes, err := json.Marshal(result)
+	if err != nil {
+		return nil, err
+	}
 
-	gz.Close()
+	slog.Debug("json.Marshal of Result", "took", time.Since(t))
 
-	slog.Debug("json compression", "took", time.Since(t))
-
-	return buf.Bytes(), err
+	return jsonBytes, err
 }
 
 // Scroll returns any cached data for the given query, otherwise returns the
-// compressed JSON result of calling our Scroller.Scroll().
+// JSON result of calling our Scroller.Scroll().
 func (c *CachedQuerier) Scroll(query *es.Query) ([]byte, error) {
-	return c.wrapWithCache(c.Scroller.Scroll, query)
+	return c.wrapWithCache(cacheKeyPrefixResults, query, c.scrollQuerier)
 }
 
-// Decompress takes the output of CachedQuerier.Search() or Scroll() and turns
-// it back in to a Result.
-func Decompress(data []byte) (*es.Result, error) {
+func (c *CachedQuerier) scrollQuerier(query *es.Query) ([]byte, error) {
 	t := time.Now()
-	gr, err := gzip.NewReader(bytes.NewReader(data))
+
+	result, err := c.Scroller.Scroll(query)
 	if err != nil {
 		return nil, err
 	}
 
-	data, err = io.ReadAll(gr)
+	slog.Debug("scroll query", "took", time.Since(t))
+
+	return resultToJSON(result)
+}
+
+// Usernames returns any cached slice for the given query, otherwise returns
+// the slice from calling our Scroller.Usernames().
+func (c *CachedQuerier) Usernames(query *es.Query) ([]byte, error) {
+	return c.wrapWithCache(cacheKeyPrefixStrings, query, c.usernameQuerier)
+}
+
+func (c *CachedQuerier) usernameQuerier(query *es.Query) ([]byte, error) {
+	t := time.Now()
+
+	usernames, err := c.Scroller.Usernames(query)
 	if err != nil {
 		return nil, err
 	}
 
-	gr.Close()
+	slog.Debug("usernames query", "took", time.Since(t))
 
-	slog.Debug("json decompression", "took", time.Since(t))
-	t = time.Now()
+	return stringsToJSON(usernames)
+}
 
+func stringsToJSON(strs []string) ([]byte, error) {
+	t := time.Now()
+	jsonBytes, err := json.Marshal(strs)
+	if err != nil {
+		return nil, err
+	}
+
+	slog.Debug("json.Marshal of usernames", "took", time.Since(t))
+
+	return jsonBytes, err
+}
+
+// Decode takes the output of CachedQuerier.Search() or Scroll() and turns it
+// back in to a Result.
+func Decode(data []byte) (*es.Result, error) {
+	t := time.Now()
 	result := &es.Result{}
-	err = json.Unmarshal(data, result)
+
+	err := json.NewDecoder(bytes.NewReader(data)).Decode(result)
+	if err != nil {
+		return nil, err
+	}
 
 	slog.Debug("json.Unmarshal", "took", time.Since(t))
 

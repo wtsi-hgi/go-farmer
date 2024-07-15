@@ -35,8 +35,9 @@ import (
 )
 
 const (
-	slash      = "/"
-	scrollPage = "scroll"
+	slash                = "/"
+	scrollPage           = "scroll"
+	getUsernamesEndpoint = "get_usernames"
 )
 
 // SearchScroller types have Search and Scroll functions for querying something
@@ -45,6 +46,7 @@ const (
 type SearchScroller interface {
 	Search(query *es.Query) ([]byte, error)
 	Scroll(query *es.Query) ([]byte, error)
+	Usernames(query *es.Query) ([]byte, error)
 }
 
 // Server is a http.Handler that pretends to be like an elastic search server,
@@ -80,6 +82,7 @@ func New(sc SearchScroller, index string, proxyTarget *url.URL) *Server {
 
 	mux.HandleFunc(slash+url.QueryEscape(index)+slash+es.SearchPage, s.search)
 	mux.HandleFunc(slash+es.SearchPage+slash+scrollPage, s.fakeScroll)
+	mux.HandleFunc(slash+getUsernamesEndpoint, s.usernames)
 	mux.Handle(slash, proxy)
 
 	return s
@@ -108,19 +111,40 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	compressedResult, ok := s.handleQuery(w, query)
+	jsonResult, ok := s.handleQuery(w, query)
 	if !ok {
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Content-Encoding", "gzip")
 	w.WriteHeader(http.StatusOK)
 
-	_, err := w.Write(compressedResult)
+	_, err := w.Write(jsonResult)
 	if err != nil {
 		slog.Error("write to client failed", "err", err)
 	}
+}
+
+func (s *Server) handleQuery(w http.ResponseWriter, query *es.Query) ([]byte, bool) {
+	var (
+		jsonResult []byte
+		err        error
+	)
+
+	if query.IsScroll() {
+		jsonResult, err = s.sc.Scroll(query)
+	} else {
+		jsonResult, err = s.sc.Search(query)
+	}
+
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		sendMessageToClient(w, err.Error())
+
+		return nil, false
+	}
+
+	return jsonResult, true
 }
 
 // fakeScroll handles unneeded requests to the /_search/scroll endpoint.
@@ -139,24 +163,32 @@ func (s *Server) fakeScroll(w http.ResponseWriter, r *http.Request) {
 	sendMessageToClient(w, msg)
 }
 
-func (s *Server) handleQuery(w http.ResponseWriter, query *es.Query) ([]byte, bool) {
-	var (
-		compressedResult []byte
-		err              error
-	)
+// usernames handles /get_usernames requests which are treated like scroll
+// search requests, but we only return an array of unique usernames found in the
+// result.
+func (s *Server) usernames(w http.ResponseWriter, r *http.Request) {
+	r.URL.Path = es.SearchPage
 
-	if query.IsScroll() {
-		compressedResult, err = s.sc.Scroll(query)
-	} else {
-		compressedResult, err = s.sc.Search(query)
+	query, ok := es.NewQuery(r)
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+
+		return
 	}
 
+	jsonStrs, err := s.sc.Usernames(query)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		sendMessageToClient(w, err.Error())
 
-		return nil, false
+		return
 	}
 
-	return compressedResult, true
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	_, err = w.Write(jsonStrs)
+	if err != nil {
+		slog.Error("write to client failed", "err", err)
+	}
 }

@@ -27,10 +27,12 @@ package server
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sort"
 	"strings"
 	"testing"
 
@@ -55,7 +57,7 @@ func TestServer(t *testing.T) {
 		defer mockReal.Close()
 
 		mock := es.NewMock(index)
-		cq, err := cache.New(mock.Client(), mock.Client(), 1)
+		cq, err := cache.New(mock, mock, 1)
 		So(err, ShouldBeNil)
 
 		server := New(cq, index, &url.URL{Host: strings.TrimPrefix(mockReal.URL, "http://"), Scheme: "http"})
@@ -106,10 +108,10 @@ func TestServer(t *testing.T) {
 
 			data, err := io.ReadAll(resp.Body)
 			So(err, ShouldBeNil)
-			So(len(data), ShouldEqual, 138)
+			So(len(data), ShouldEqual, 240)
 			resp.Body.Close()
 
-			result, err := cache.Decompress(data)
+			result, err := cache.Decode(data)
 			So(err, ShouldBeNil)
 
 			So(len(result.HitSet.Hits), ShouldEqual, 0)
@@ -129,7 +131,7 @@ func TestServer(t *testing.T) {
 			So(err, ShouldBeNil)
 			resp.Body.Close()
 
-			result, err := cache.Decompress(data)
+			result, err := cache.Decode(data)
 			So(err, ShouldBeNil)
 
 			So(result.Aggregations, ShouldBeNil)
@@ -147,7 +149,7 @@ func TestServer(t *testing.T) {
 			So(err, ShouldBeNil)
 			resp.Body.Close()
 
-			result, err = cache.Decompress(data)
+			result, err = cache.Decode(data)
 			So(err, ShouldBeNil)
 
 			So(result.Aggregations, ShouldBeNil)
@@ -179,6 +181,32 @@ func TestServer(t *testing.T) {
 			bodyBytes, err := io.ReadAll(resp.Body)
 			So(err, ShouldBeNil)
 			So(string(bodyBytes), ShouldEqual, `{"succeeded":true,"num_freed":0}`)
+		})
+
+		Convey("and a valid get_usernames request, server returns all users", func() {
+			req, _ := mock.ScrollQuery("?scroll=1m")
+			req.URL.Path = slash + getUsernamesEndpoint
+
+			w := httptest.NewRecorder()
+
+			server.ServeHTTP(w, req)
+
+			resp := w.Result()
+			So(resp.StatusCode, ShouldEqual, http.StatusOK)
+
+			data, err := io.ReadAll(resp.Body)
+			So(err, ShouldBeNil)
+			resp.Body.Close()
+
+			var usernames []string
+
+			err = json.Unmarshal(data, &usernames)
+			So(err, ShouldBeNil)
+
+			sort.Strings(usernames)
+
+			expected := []string{"u", "u1", "u2"}
+			So(usernames, ShouldResemble, expected)
 		})
 	})
 }

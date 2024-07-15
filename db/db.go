@@ -418,6 +418,28 @@ func (d *DB) scrollFlatFilesAndHandleErrors(wg *sync.WaitGroup, paths []string,
 	}
 }
 
+// Usernames is like Scroll(), but picks out and returns only the unique
+// usernames from amongst the Hits.
+func (d *DB) Usernames(query *es.Query) ([]string, error) {
+	r, err := d.Scroll(query)
+	if err != nil {
+		return nil, err
+	}
+
+	usernamesMap := make(map[string]bool)
+
+	for _, hit := range r.HitSet.Hits {
+		usernamesMap[hit.Details.UserName] = true
+	}
+
+	usernames := make([]string, 0, len(usernamesMap))
+	for username := range usernamesMap {
+		usernames = append(usernames, username)
+	}
+
+	return usernames, nil
+}
+
 // Close closes any open filehandles. You must call this after your last use of
 // Store(), or your database files will be corrupt.
 func (d *DB) Close() error {

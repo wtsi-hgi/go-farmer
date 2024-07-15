@@ -186,7 +186,7 @@ func TestDB(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(details, ShouldResemble, result.HitSet.Hits[expectedNumHits-1].Details)
 
-			Convey("Which you can then retrieve via Scroll()", func() {
+			Convey("Which you can then retrieve via Scroll() and Usernames()", func() {
 				query := &es.Query{
 					Query: &es.QueryFilter{Bool: es.QFBool{Filter: es.Filter{
 						{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
@@ -236,6 +236,10 @@ func TestDB(t *testing.T) {
 				So(retrieved.HitSet.Hits[firstHitIndex].Details, ShouldResemble, result.HitSet.Hits[1].Details)
 				So(lastHitIndex, ShouldNotEqual, -1)
 				So(retrieved.HitSet.Hits[lastHitIndex].Details, ShouldResemble, result.HitSet.Hits[expectedNumHits-1].Details)
+
+				usernames, err := db.Usernames(query)
+				So(err, ShouldBeNil)
+				So(usernames, ShouldResemble, []string{"userA", "userB"})
 
 				aMatch := map[string]es.MapStringStringOrMap{"match_phrase": map[string]interface{}{"ACCOUNTING_NAME": "groupA"}}
 				query.Query.Bool.Filter = append(query.Query.Bool.Filter, aMatch)
@@ -288,6 +292,10 @@ func TestDB(t *testing.T) {
 
 				So(retrieved.HitSet.Hits[0].Details.UserName, ShouldNotBeBlank)
 				So(retrieved.HitSet.Hits[0].Details.AccountingName, ShouldBeBlank)
+
+				usernames, err = db.Usernames(query)
+				So(err, ShouldBeNil)
+				So(usernames, ShouldResemble, []string{"userA"})
 			})
 
 			Convey("A DB's knowledge of available flat files updates over time", func() {

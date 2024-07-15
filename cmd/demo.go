@@ -266,7 +266,7 @@ func timeSearch(cb func() ([]byte, error)) { //nolint:gocyclo
 	cliPrint("search took: %s\n", time.Since(t))
 	t = time.Now()
 
-	result, err := cache.Decompress(data)
+	result, err := cache.Decode(data)
 	if err != nil {
 		die("error decompressing: %s", err)
 	}

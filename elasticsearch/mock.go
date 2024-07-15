@@ -199,11 +199,20 @@ func (m mockTransport) scrollHits(wasPost bool) string {
 		scrollHitsReturned = 0
 	}
 
+	numU2 := 5
+	numU1 := hitsToReturn - numU2
+
+	if numU1 < 1 {
+		numU1 = hitsToReturn
+		numU2 = 0
+	}
+
 	return `{
 		"hits": {
 			"total":{"value":` + strconv.Itoa(testScrollManyHitsNum) + `},
 			"hits": [` +
-		strings.Repeat(`{"_id": "id", "_source": { "USER_NAME": "u" } },`, hitsToReturn-1) +
+		strings.Repeat(`{"_id": "id", "_source": { "USER_NAME": "u1" } },`, numU1-1) +
+		strings.Repeat(`{"_id": "id", "_source": { "USER_NAME": "u2" } },`, numU2) +
 		`
 				{"_id": "id", "_source": { "USER_NAME": "u" } }
 			]
@@ -214,8 +223,8 @@ func (m mockTransport) scrollHits(wasPost bool) string {
 // Mock helps you test elasticsearch queries without a real elasticsearch
 // server.
 type Mock struct {
-	client *Client
-	index  string
+	*Client
+	index string
 }
 
 // NewMock returns a Mock that you can get a mock Client and queries from.
@@ -232,13 +241,7 @@ func NewMock(index string) *Mock {
 
 	client, _ := NewClient(config) //nolint:errcheck
 
-	return &Mock{client: client, index: url.QueryEscape(index)}
-}
-
-// Client returns a Client that talks to a mock Elastic Search server, useful
-// for testing elastic search interactions with our queries.
-func (m *Mock) Client() *Client {
-	return m.client
+	return &Mock{Client: client, index: url.QueryEscape(index)}
 }
 
 // AggQuery returns a http.Request that is requesting an aggregation search.
@@ -256,4 +259,24 @@ func (m *Mock) ScrollQuery(args string) (*http.Request, int) {
 	req := httptest.NewRequest(http.MethodPost, "/"+m.index+"/"+SearchPage+args, strings.NewReader(testScollQueryManyHits))
 
 	return req, testScrollManyHitsNum
+}
+
+func (m *Mock) Usernames(query *Query) ([]string, error) {
+	r, err := m.Scroll(query)
+	if err != nil {
+		return nil, err
+	}
+
+	usernamesMap := make(map[string]bool)
+
+	for _, hit := range r.HitSet.Hits {
+		usernamesMap[hit.Details.UserName] = true
+	}
+
+	usernames := make([]string, 0, len(usernamesMap))
+	for username := range usernamesMap {
+		usernames = append(usernames, username)
+	}
+
+	return usernames, nil
 }

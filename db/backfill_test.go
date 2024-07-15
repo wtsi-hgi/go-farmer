@@ -68,7 +68,7 @@ func TestBackfill(t *testing.T) {
 		mock := es.NewMock("some-indexes-*")
 		config := Config{Directory: dir}
 
-		err := Backfill(mock.Client(), config, from, period)
+		err := Backfill(mock, config, from, period)
 		So(err, ShouldBeNil)
 
 		bom := "Human Genetics"
@@ -96,7 +96,7 @@ func TestBackfill(t *testing.T) {
 			err = os.RemoveAll(filepath.Dir(filepath.Dir(localPath31)))
 			So(err, ShouldBeNil)
 
-			err = Backfill(mock.Client(), config, from, period)
+			err = Backfill(mock, config, from, period)
 			So(err, ShouldBeNil)
 
 			infoRepeat, err := os.Stat(localPath30)
@@ -118,7 +118,7 @@ func TestBackfill(t *testing.T) {
 			err = f.Close()
 			So(err, ShouldBeNil)
 
-			err = Backfill(mock.Client(), config, from, period)
+			err = Backfill(mock, config, from, period)
 			So(err, ShouldBeNil)
 
 			infoRepeat, err := os.Stat(localPath31)

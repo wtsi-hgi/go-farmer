@@ -26,6 +26,8 @@
 package cache
 
 import (
+	"encoding/json"
+	"sort"
 	"strconv"
 	"testing"
 
@@ -39,8 +41,9 @@ const (
 )
 
 type mockSearchScroller struct {
-	searchCalls int
-	scrollCalls int
+	searchCalls   int
+	scrollCalls   int
+	usernameCalls int
 }
 
 func (m *mockSearchScroller) Search(query *es.Query) (*es.Result, error) {
@@ -62,6 +65,13 @@ func (m *mockSearchScroller) querier(query *es.Query) (*es.Result, error) {
 			Total: es.HitSetTotal{
 				Value: total,
 			},
+			Hits: []es.Hit{
+				{Details: &es.Details{UserName: "a"}},
+				{Details: &es.Details{UserName: "a"}},
+				{Details: &es.Details{UserName: "b"}},
+				{Details: &es.Details{UserName: "a"}},
+				{Details: &es.Details{UserName: "b"}},
+			},
 		},
 	}, nil
 }
@@ -70,6 +80,28 @@ func (m *mockSearchScroller) Scroll(query *es.Query) (*es.Result, error) {
 	m.scrollCalls++
 
 	return m.querier(query)
+}
+
+func (m *mockSearchScroller) Usernames(query *es.Query) ([]string, error) {
+	m.usernameCalls++
+
+	r, err := m.querier(query)
+	if err != nil {
+		return nil, err
+	}
+
+	usernamesMap := make(map[string]bool)
+
+	for _, hit := range r.HitSet.Hits {
+		usernamesMap[hit.Details.UserName] = true
+	}
+
+	usernames := make([]string, 0, len(usernamesMap))
+	for username := range usernamesMap {
+		usernames = append(usernames, username)
+	}
+
+	return usernames, nil
 }
 
 func TestCache(t *testing.T) {
@@ -93,7 +125,7 @@ func TestCache(t *testing.T) {
 			data, err := cq.Search(query)
 			So(err, ShouldBeNil)
 
-			results, err := Decompress(data)
+			results, err := Decode(data)
 			So(err, ShouldBeNil)
 			So(results.HitSet.Total.Value, ShouldEqual, expectedTotal)
 			So(ss.searchCalls, ShouldEqual, 1)
@@ -101,7 +133,7 @@ func TestCache(t *testing.T) {
 			data, err = cq.Search(query)
 			So(err, ShouldBeNil)
 
-			results, err = Decompress(data)
+			results, err = Decode(data)
 			So(err, ShouldBeNil)
 			So(results.HitSet.Total.Value, ShouldEqual, expectedTotal)
 			So(ss.searchCalls, ShouldEqual, 1)
@@ -118,7 +150,7 @@ func TestCache(t *testing.T) {
 				data, err = cq.Search(query2)
 				So(err, ShouldBeNil)
 
-				results, err = Decompress(data)
+				results, err = Decode(data)
 				So(err, ShouldBeNil)
 				So(results.HitSet.Total.Value, ShouldEqual, expectedTotal2)
 				So(ss.searchCalls, ShouldEqual, 2)
@@ -126,7 +158,7 @@ func TestCache(t *testing.T) {
 				data, err = cq.Search(query2)
 				So(err, ShouldBeNil)
 
-				results, err = Decompress(data)
+				results, err = Decode(data)
 				So(err, ShouldBeNil)
 				So(results.HitSet.Total.Value, ShouldEqual, expectedTotal2)
 				So(ss.searchCalls, ShouldEqual, 2)
@@ -135,7 +167,7 @@ func TestCache(t *testing.T) {
 				data, err = cq.Search(query)
 				So(err, ShouldBeNil)
 
-				results, err = Decompress(data)
+				results, err = Decode(data)
 				So(err, ShouldBeNil)
 				So(results.HitSet.Total.Value, ShouldEqual, expectedTotal)
 				So(ss.searchCalls, ShouldEqual, 2)
@@ -151,7 +183,7 @@ func TestCache(t *testing.T) {
 					data, err = cq.Search(query3)
 					So(err, ShouldBeNil)
 
-					results, err = Decompress(data)
+					results, err = Decode(data)
 					So(err, ShouldBeNil)
 					So(results.HitSet.Total.Value, ShouldEqual, expectedTotal3)
 					So(ss.searchCalls, ShouldEqual, 3)
@@ -159,7 +191,7 @@ func TestCache(t *testing.T) {
 					data, err = cq.Search(query3)
 					So(err, ShouldBeNil)
 
-					results, err = Decompress(data)
+					results, err = Decode(data)
 					So(err, ShouldBeNil)
 					So(results.HitSet.Total.Value, ShouldEqual, expectedTotal3)
 					So(ss.searchCalls, ShouldEqual, 3)
@@ -167,7 +199,7 @@ func TestCache(t *testing.T) {
 					data, err = cq.Search(query)
 					So(err, ShouldBeNil)
 
-					results, err = Decompress(data)
+					results, err = Decode(data)
 					So(err, ShouldBeNil)
 					So(results.HitSet.Total.Value, ShouldEqual, expectedTotal)
 					So(ss.searchCalls, ShouldEqual, 3)
@@ -175,7 +207,7 @@ func TestCache(t *testing.T) {
 					data, err = cq.Search(query2)
 					So(err, ShouldBeNil)
 
-					results, err = Decompress(data)
+					results, err = Decode(data)
 					So(err, ShouldBeNil)
 					So(results.HitSet.Total.Value, ShouldEqual, expectedTotal2)
 					So(ss.searchCalls, ShouldEqual, 4)
@@ -189,7 +221,7 @@ func TestCache(t *testing.T) {
 			data, err := cq.Scroll(query)
 			So(err, ShouldBeNil)
 
-			results, err := Decompress(data)
+			results, err := Decode(data)
 			So(err, ShouldBeNil)
 			So(results.HitSet.Total.Value, ShouldEqual, expectedTotal)
 			So(ss.scrollCalls, ShouldEqual, 1)
@@ -197,9 +229,63 @@ func TestCache(t *testing.T) {
 			data, err = cq.Scroll(query)
 			So(err, ShouldBeNil)
 
-			results, err = Decompress(data)
+			results, err = Decode(data)
 			So(err, ShouldBeNil)
 			So(results.HitSet.Total.Value, ShouldEqual, expectedTotal)
+			So(ss.scrollCalls, ShouldEqual, 1)
+			So(ss.searchCalls, ShouldEqual, 0)
+		})
+
+		Convey("You can get uncached, then cached Usernames results", func() {
+			So(ss.usernameCalls, ShouldEqual, 0)
+
+			data, err := cq.Usernames(query)
+			So(err, ShouldBeNil)
+
+			var usernames []string
+
+			err = json.Unmarshal(data, &usernames)
+			So(err, ShouldBeNil)
+
+			sort.Strings(usernames)
+
+			expected := []string{"a", "b"}
+			So(usernames, ShouldResemble, expected)
+			So(ss.usernameCalls, ShouldEqual, 1)
+
+			data, err = cq.Usernames(query)
+			So(err, ShouldBeNil)
+
+			usernames = nil
+
+			err = json.Unmarshal(data, &usernames)
+			So(err, ShouldBeNil)
+			sort.Strings(usernames)
+			So(usernames, ShouldResemble, expected)
+			So(ss.usernameCalls, ShouldEqual, 1)
+			So(ss.scrollCalls, ShouldEqual, 0)
+			So(ss.searchCalls, ShouldEqual, 0)
+
+			rdata, err := cq.Scroll(query)
+			So(err, ShouldBeNil)
+
+			results, err := Decode(rdata)
+			So(err, ShouldBeNil)
+			So(results.HitSet.Total.Value, ShouldEqual, expectedTotal)
+			So(ss.scrollCalls, ShouldEqual, 1)
+
+			data, err = cq.Usernames(query)
+			So(err, ShouldBeNil)
+
+			usernames = nil
+
+			err = json.Unmarshal(data, &usernames)
+			So(err, ShouldBeNil)
+
+			sort.Strings(usernames)
+
+			So(usernames, ShouldResemble, expected)
+			So(ss.usernameCalls, ShouldEqual, 1)
 			So(ss.scrollCalls, ShouldEqual, 1)
 			So(ss.searchCalls, ShouldEqual, 0)
 		})
