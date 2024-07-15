@@ -27,10 +27,11 @@ package cache
 
 import (
 	"bytes"
-	"encoding/json"
 	"log/slog"
+	"reflect"
 	"time"
 
+	"github.com/bytedance/sonic"
 	lru "github.com/hashicorp/golang-lru/v2"
 	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
 )
@@ -70,6 +71,12 @@ type CachedQuerier struct {
 // the Results.
 func New(searcher Searcher, scroller Scroller, cacheSize int) (*CachedQuerier, error) {
 	l, err := lru.New[string, []byte](cacheSize)
+	if err != nil {
+		return nil, err
+	}
+
+	var r es.Result
+	err = sonic.Pretouch(reflect.TypeOf(&r))
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +127,7 @@ func (c *CachedQuerier) searchQuerier(query *es.Query) ([]byte, error) {
 
 func resultToJSON(result *es.Result) ([]byte, error) {
 	t := time.Now()
-	jsonBytes, err := json.Marshal(result)
+	jsonBytes, err := sonic.Marshal(result)
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +177,7 @@ func (c *CachedQuerier) usernameQuerier(query *es.Query) ([]byte, error) {
 
 func stringsToJSON(strs []string) ([]byte, error) {
 	t := time.Now()
-	jsonBytes, err := json.Marshal(strs)
+	jsonBytes, err := sonic.Marshal(strs)
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +193,7 @@ func Decode(data []byte) (*es.Result, error) {
 	t := time.Now()
 	result := &es.Result{}
 
-	err := json.NewDecoder(bytes.NewReader(data)).Decode(result)
+	err := sonic.ConfigDefault.NewDecoder(bytes.NewReader(data)).Decode(result)
 	if err != nil {
 		return nil, err
 	}

@@ -27,11 +27,11 @@
 package elasticsearch
 
 import (
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
 
+	"github.com/bytedance/sonic"
 	"github.com/deneonet/benc"
 	"github.com/deneonet/benc/bstd"
 	"github.com/elastic/go-elasticsearch/v7/esapi"
@@ -539,7 +539,7 @@ func parseResultResponse(resp *esapi.Response) (*Result, error) {
 
 	var result Result
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := sonic.ConfigDefault.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
 
