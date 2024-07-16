@@ -113,7 +113,7 @@ func TestDetails(t *testing.T) {
 
 		recovered, err = DeserializeDetails(detailBytes, []string{"JOB_NAME"})
 		So(err, ShouldBeNil)
-		So(recovered, ShouldResemble, &Details{ID: expectedID, JobName: "_"})
+		So(recovered, ShouldResemble, &Details{ID: expectedID, JobName: ""})
 
 		recovered, err = DeserializeDetails(detailBytes, []string{"Job"})
 		So(err, ShouldBeNil)

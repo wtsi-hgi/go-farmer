@@ -146,17 +146,17 @@ type Hit struct {
 
 // Details holds the document information of a Hit.
 type Details struct {
-	ID              string `json:"_id,omitempty"`
-	AccountingName  string `json:"ACCOUNTING_NAME,omitempty"`
-	AvailCPUTimeSec int64  `json:"AVAIL_CPU_TIME_SEC,omitempty"`
+	ID              string `json:"_id"`
+	AccountingName  string `json:"ACCOUNTING_NAME"`
+	AvailCPUTimeSec int64  `json:"AVAIL_CPU_TIME_SEC"`
 	// AVG_MEM_EFFICIENCY_PERCENT     float64
 	// AVRG_MEM_USAGE_MB              float64
 	// AVRG_MEM_USAGE_MB_SEC_COOKED   float64
 	// AVRG_MEM_USAGE_MB_SEC_RAW      float64
-	BOM string `json:",omitempty"`
+	BOM string `json:"BOM"`
 	// CLUSTER_NAME                   string
 	// COOKED_CPU_TIME_SEC            float64
-	Command string `json:",omitempty"`
+	Command string `json:"Command"`
 	// END_TIME                       int
 	// EXEC_HOSTNAME                  []string
 	// Exit_Info                      int
@@ -164,33 +164,33 @@ type Details struct {
 	// JOB_ID          int
 	// JOB_ARRAY_INDEX int
 	// JOB_EXIT_STATUS                int
-	JobName string `json:"JOB_NAME,omitempty"`
-	Job     string `json:",omitempty"`
+	JobName string `json:"JOB_NAME"`
+	Job     string `json:"Job"`
 	// Job_Efficiency_Percent         float64
 	// Job_Efficiency_Raw_Percent     float64
 	// MAX_MEM_EFFICIENCY_PERCENT     float64
 	// MAX_MEM_USAGE_MB               float64
 	// MAX_MEM_USAGE_MB_SEC_COOKED    float64
 	// MAX_MEM_USAGE_MB_SEC_RAW       float64
-	MemRequestedMB    int64 `json:"MEM_REQUESTED_MB,omitempty"`
-	MemRequestedMBSec int64 `json:"MEM_REQUESTED_MB_SEC,omitempty"`
-	NumExecProcs      int64 `json:"NUM_EXEC_PROCS,omitempty"`
+	MemRequestedMB    int64 `json:"MEM_REQUESTED_MB"`
+	MemRequestedMBSec int64 `json:"MEM_REQUESTED_MB_SEC"`
+	NumExecProcs      int64 `json:"NUM_EXEC_PROCS"`
 	// NumberOfHosts                  int
 	// NumberOfUniqueHosts            int
-	PendingTimeSec int64 `json:"PENDING_TIME_SEC,omitempty"`
+	PendingTimeSec int64 `json:"PENDING_TIME_SEC"`
 	// PROJECT_NAME                   string
-	QueueName string `json:"QUEUE_NAME,omitempty"`
+	QueueName string `json:"QUEUE_NAME"`
 	// RAW_AVG_MEM_EFFICIENCY_PERCENT float64
 	// RAW_CPU_TIME_SEC               float64
 	// RAW_MAX_MEM_EFFICIENCY_PERCENT float64
 	// RAW_WASTED_CPU_SECONDS         float64
 	// RAW_WASTED_MB_SECONDS          float64
-	RunTimeSec int64 `json:"RUN_TIME_SEC,omitempty"`
+	RunTimeSec int64 `json:"RUN_TIME_SEC"`
 	// SUBMIT_TIME  int
-	Timestamp        int64   `json:"timestamp,omitempty"`
-	UserName         string  `json:"USER_NAME,omitempty"`
-	WastedCPUSeconds float64 `json:"WASTED_CPU_SECONDS,omitempty"`
-	WastedMBSeconds  float64 `json:"WASTED_MB_SECONDS,omitempty"`
+	Timestamp        int64   `json:"timestamp"`
+	UserName         string  `json:"USER_NAME"`
+	WastedCPUSeconds float64 `json:"WASTED_CPU_SECONDS"`
+	WastedMBSeconds  float64 `json:"WASTED_MB_SECONDS"`
 }
 
 // Serialize converts a Details to a byte slice representation suitable for
@@ -513,10 +513,6 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 			"attempt", details, "cmd_length", len(details.Command),
 			"jobname_length", len(details.JobName), "job_length", len(details.Job),
 			"encoded_length", len(encoded), "n", n)
-	}
-
-	if doField["JOB_NAME"] && details.JobName == "" {
-		details.JobName = "_"
 	}
 
 	return details, err

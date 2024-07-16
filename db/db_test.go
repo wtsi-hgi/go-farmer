@@ -239,6 +239,8 @@ func TestDB(t *testing.T) {
 
 				usernames, err := db.Usernames(query)
 				So(err, ShouldBeNil)
+
+				sort.Strings(usernames)
 				So(usernames, ShouldResemble, []string{"userA", "userB"})
 
 				aMatch := map[string]es.MapStringStringOrMap{"match_phrase": map[string]interface{}{"ACCOUNTING_NAME": "groupA"}}

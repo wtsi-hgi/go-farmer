@@ -29,6 +29,7 @@ import (
 	"encoding/json"
 	"sort"
 	"strconv"
+	"strings"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -66,11 +67,11 @@ func (m *mockSearchScroller) querier(query *es.Query) (*es.Result, error) {
 				Value: total,
 			},
 			Hits: []es.Hit{
-				{Details: &es.Details{UserName: "a"}},
-				{Details: &es.Details{UserName: "a"}},
-				{Details: &es.Details{UserName: "b"}},
-				{Details: &es.Details{UserName: "a"}},
-				{Details: &es.Details{UserName: "b"}},
+				{Details: &es.Details{ID: "1", UserName: "a", Job: "j", MemRequestedMB: 1}},
+				{Details: &es.Details{ID: "2", UserName: "a"}},
+				{Details: &es.Details{ID: "3", UserName: "b"}},
+				{Details: &es.Details{ID: "4", UserName: "a"}},
+				{Details: &es.Details{ID: "5", UserName: "b"}},
 			},
 		},
 	}, nil
@@ -288,6 +289,57 @@ func TestCache(t *testing.T) {
 			So(ss.usernameCalls, ShouldEqual, 1)
 			So(ss.scrollCalls, ShouldEqual, 1)
 			So(ss.searchCalls, ShouldEqual, 0)
+		})
+
+		Convey("You can get all fields, or just the ones you want", func() {
+			data, err := cq.Scroll(query)
+			So(err, ShouldBeNil)
+
+			jsonStr := string(data)
+			So(strings.Count(jsonStr, `{"_source":{"_id":"`), ShouldEqual, 5)
+			So(strings.Count(jsonStr, `,"MEM_REQUESTED_MB":1`), ShouldEqual, 1)
+			So(strings.Count(jsonStr, `,"MEM_REQUESTED_MB":`), ShouldEqual, 5)
+			So(strings.Count(jsonStr, `,"Job":"j"`), ShouldEqual, 1)
+			So(strings.Count(jsonStr, `,"Job":`), ShouldEqual, 5)
+			So(strings.Count(jsonStr, `,"ACCOUNTING_NAME":`), ShouldEqual, 5)
+			So(strings.Count(jsonStr, `,"AVAIL_CPU_TIME_SEC":`), ShouldEqual, 5)
+			So(strings.Count(jsonStr, `,"BOM":`), ShouldEqual, 5)
+			So(strings.Count(jsonStr, `,"Command":`), ShouldEqual, 5)
+			So(strings.Count(jsonStr, `,"JOB_NAME":`), ShouldEqual, 5)
+			So(strings.Count(jsonStr, `,"MEM_REQUESTED_MB_SEC":`), ShouldEqual, 5)
+			So(strings.Count(jsonStr, `,"NUM_EXEC_PROCS":`), ShouldEqual, 5)
+			So(strings.Count(jsonStr, `,"PENDING_TIME_SEC":`), ShouldEqual, 5)
+			So(strings.Count(jsonStr, `,"QUEUE_NAME":`), ShouldEqual, 5)
+			So(strings.Count(jsonStr, `,"RUN_TIME_SEC":`), ShouldEqual, 5)
+			So(strings.Count(jsonStr, `,"timestamp":`), ShouldEqual, 5)
+			So(strings.Count(jsonStr, `,"USER_NAME":`), ShouldEqual, 5)
+			So(strings.Count(jsonStr, `,"WASTED_CPU_SECONDS":`), ShouldEqual, 5)
+			So(strings.Count(jsonStr, `,"WASTED_MB_SECONDS":0`), ShouldEqual, 5)
+
+			query.Source = []string{"MEM_REQUESTED_MB", "Job", "WASTED_MB_SECONDS"}
+			data, err = cq.Scroll(query)
+			So(err, ShouldBeNil)
+
+			jsonStr = string(data)
+			So(strings.Count(jsonStr, `{"_source":{"_id":"`), ShouldEqual, 5)
+			So(strings.Count(jsonStr, `,"MEM_REQUESTED_MB":1`), ShouldEqual, 1)
+			So(strings.Count(jsonStr, `,"MEM_REQUESTED_MB":0`), ShouldEqual, 4)
+			So(strings.Count(jsonStr, `,"Job":"j"`), ShouldEqual, 1)
+			So(strings.Count(jsonStr, `,"Job":""`), ShouldEqual, 4)
+			So(strings.Count(jsonStr, `,"ACCOUNTING_NAME":`), ShouldEqual, 0)
+			So(strings.Count(jsonStr, `,"AVAIL_CPU_TIME_SEC":`), ShouldEqual, 0)
+			So(strings.Count(jsonStr, `,"BOM":`), ShouldEqual, 0)
+			So(strings.Count(jsonStr, `,"Command":`), ShouldEqual, 0)
+			So(strings.Count(jsonStr, `,"JOB_NAME":`), ShouldEqual, 0)
+			So(strings.Count(jsonStr, `,"MEM_REQUESTED_MB_SEC":`), ShouldEqual, 0)
+			So(strings.Count(jsonStr, `,"NUM_EXEC_PROCS":`), ShouldEqual, 0)
+			So(strings.Count(jsonStr, `,"PENDING_TIME_SEC":`), ShouldEqual, 0)
+			So(strings.Count(jsonStr, `,"QUEUE_NAME":`), ShouldEqual, 0)
+			So(strings.Count(jsonStr, `,"RUN_TIME_SEC":`), ShouldEqual, 0)
+			So(strings.Count(jsonStr, `,"timestamp":`), ShouldEqual, 0)
+			So(strings.Count(jsonStr, `,"USER_NAME":`), ShouldEqual, 0)
+			So(strings.Count(jsonStr, `,"WASTED_CPU_SECONDS":`), ShouldEqual, 0)
+			So(strings.Count(jsonStr, `,"WASTED_MB_SECONDS":0`), ShouldEqual, 5)
 		})
 	})
 }

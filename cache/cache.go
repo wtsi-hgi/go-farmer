@@ -115,12 +115,12 @@ func (c *CachedQuerier) searchQuerier(query *es.Query) ([]byte, error) {
 
 	slog.Debug("search query", "took", time.Since(t))
 
-	return resultToJSON(result)
+	return resultToJSON(result, query)
 }
 
-func resultToJSON(result *es.Result) ([]byte, error) {
+func resultToJSON(result *es.Result, query *es.Query) ([]byte, error) {
 	t := time.Now()
-	jsonBytes, err := easyjson.Marshal(result)
+	jsonBytes, err := result.MarshalFields(query.DesiredFields())
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +146,7 @@ func (c *CachedQuerier) scrollQuerier(query *es.Query) ([]byte, error) {
 
 	slog.Debug("scroll query", "took", time.Since(t))
 
-	return resultToJSON(result)
+	return resultToJSON(result, query)
 }
 
 // Usernames returns any cached slice for the given query, otherwise returns

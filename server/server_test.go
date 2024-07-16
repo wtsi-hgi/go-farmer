@@ -156,7 +156,7 @@ func TestServer(t *testing.T) {
 			So(result.HitSet.Total.Value, ShouldEqual, expectedNumHits)
 			So(len(result.HitSet.Hits), ShouldEqual, expectedNumHits)
 			So(result.HitSet.Hits[0].ID, ShouldNotBeBlank)
-			So(result.HitSet.Hits[0].Details.ID, ShouldBeBlank)
+			So(result.HitSet.Hits[0].Details.ID, ShouldEqual, "unknown")
 		})
 
 		Convey("and scroll endpoint requests, server returns pretend responses", func() {

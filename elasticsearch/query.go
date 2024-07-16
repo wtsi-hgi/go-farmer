@@ -57,6 +57,18 @@ type Query struct {
 	ScrollParamSet bool         `json:"_scroll,omitempty"`
 }
 
+// DesiredFields returns a map with keys corresponding to Source values, and
+// values of true.
+func (q *Query) DesiredFields() map[string]bool {
+	df := make(map[string]bool, len(q.Source))
+
+	for _, field := range q.Source {
+		df[field] = true
+	}
+
+	return df
+}
+
 // Aggs is used to specify an aggregation query.
 type Aggs struct {
 	Stats interface{} `json:"stats"`

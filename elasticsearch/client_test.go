@@ -27,7 +27,6 @@
 package elasticsearch
 
 import (
-	"encoding/json"
 	"os"
 	"strconv"
 	"strings"
@@ -119,7 +118,9 @@ func doClientTests(t *testing.T, config Config, expectedNumHits int) {
 				So(result.HitSet.Hits[0].Details.UserName, ShouldEqual, "pathpipe")
 				So(result.HitSet.Hits[0].Details.QueueName, ShouldEqual, "transfer")
 
-				jsonBytes, err := json.Marshal(result.HitSet.Hits[0].Details)
+				result.HitSet.Hits = []Hit{result.HitSet.Hits[0]}
+
+				jsonBytes, err := result.MarshalFields(query.DesiredFields())
 				So(err, ShouldBeNil)
 				So(string(jsonBytes), ShouldContainSubstring, "ACCOUNTING_NAME")
 				So(string(jsonBytes), ShouldContainSubstring, "USER_NAME")
@@ -133,7 +134,9 @@ func doClientTests(t *testing.T, config Config, expectedNumHits int) {
 				So(result.HitSet.Hits[0].Details.UserName, ShouldNotBeBlank)
 				So(result.HitSet.Hits[0].Details.QueueName, ShouldNotBeBlank)
 
-				jsonBytes, err = json.Marshal(result.HitSet.Hits[0].Details)
+				result.HitSet.Hits = []Hit{result.HitSet.Hits[0]}
+
+				jsonBytes, err = result.MarshalFields(query.DesiredFields())
 				So(err, ShouldBeNil)
 				So(string(jsonBytes), ShouldNotContainSubstring, "ACCOUNTING_NAME")
 				So(string(jsonBytes), ShouldContainSubstring, "USER_NAME")
