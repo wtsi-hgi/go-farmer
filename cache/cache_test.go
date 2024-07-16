@@ -67,11 +67,11 @@ func (m *mockSearchScroller) querier(query *es.Query) (*es.Result, error) {
 				Value: total,
 			},
 			Hits: []es.Hit{
-				{Details: &es.Details{ID: "1", UserName: "a", Job: "j", MemRequestedMB: 1}},
-				{Details: &es.Details{ID: "2", UserName: "a"}},
-				{Details: &es.Details{ID: "3", UserName: "b"}},
-				{Details: &es.Details{ID: "4", UserName: "a"}},
-				{Details: &es.Details{ID: "5", UserName: "b"}},
+				{ID: "1", Details: &es.Details{ID: "1", UserName: "a", Job: "j", MemRequestedMB: 1}},
+				{ID: "2", Details: &es.Details{ID: "2", UserName: "a"}},
+				{ID: "3", Details: &es.Details{ID: "3", UserName: "b"}},
+				{ID: "4", Details: &es.Details{ID: "4", UserName: "a"}},
+				{ID: "5", Details: &es.Details{ID: "5", UserName: "b"}},
 			},
 		},
 	}, nil
@@ -296,12 +296,13 @@ func TestCache(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			jsonStr := string(data)
-			So(strings.Count(jsonStr, `{"_source":{"_id":"`), ShouldEqual, 5)
+			So(strings.Count(jsonStr, `{"_id":"`), ShouldEqual, 5)
+			So(strings.Count(jsonStr, `{"_source":{"_id":"`), ShouldEqual, 0)
 			So(strings.Count(jsonStr, `,"MEM_REQUESTED_MB":1`), ShouldEqual, 1)
 			So(strings.Count(jsonStr, `,"MEM_REQUESTED_MB":`), ShouldEqual, 5)
 			So(strings.Count(jsonStr, `,"Job":"j"`), ShouldEqual, 1)
 			So(strings.Count(jsonStr, `,"Job":`), ShouldEqual, 5)
-			So(strings.Count(jsonStr, `,"ACCOUNTING_NAME":`), ShouldEqual, 5)
+			So(strings.Count(jsonStr, `"ACCOUNTING_NAME":`), ShouldEqual, 5)
 			So(strings.Count(jsonStr, `,"AVAIL_CPU_TIME_SEC":`), ShouldEqual, 5)
 			So(strings.Count(jsonStr, `,"BOM":`), ShouldEqual, 5)
 			So(strings.Count(jsonStr, `,"Command":`), ShouldEqual, 5)
@@ -321,12 +322,13 @@ func TestCache(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			jsonStr = string(data)
-			So(strings.Count(jsonStr, `{"_source":{"_id":"`), ShouldEqual, 5)
+			So(strings.Count(jsonStr, `{"_id":"`), ShouldEqual, 5)
+			So(strings.Count(jsonStr, `{"_source":{"_id":"`), ShouldEqual, 0)
 			So(strings.Count(jsonStr, `,"MEM_REQUESTED_MB":1`), ShouldEqual, 1)
 			So(strings.Count(jsonStr, `,"MEM_REQUESTED_MB":0`), ShouldEqual, 4)
-			So(strings.Count(jsonStr, `,"Job":"j"`), ShouldEqual, 1)
-			So(strings.Count(jsonStr, `,"Job":""`), ShouldEqual, 4)
-			So(strings.Count(jsonStr, `,"ACCOUNTING_NAME":`), ShouldEqual, 0)
+			So(strings.Count(jsonStr, `"Job":"j"`), ShouldEqual, 1)
+			So(strings.Count(jsonStr, `"Job":""`), ShouldEqual, 4)
+			So(strings.Count(jsonStr, `"ACCOUNTING_NAME":`), ShouldEqual, 0)
 			So(strings.Count(jsonStr, `,"AVAIL_CPU_TIME_SEC":`), ShouldEqual, 0)
 			So(strings.Count(jsonStr, `,"BOM":`), ShouldEqual, 0)
 			So(strings.Count(jsonStr, `,"Command":`), ShouldEqual, 0)

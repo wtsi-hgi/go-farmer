@@ -144,15 +144,6 @@ func (v Details) MarshalEasyJSON(w *jwriter.Writer, desired map[string]bool) {
 
 	doAllFields := len(desired) == 0
 
-	if v.ID == "" {
-		v.ID = "unknown"
-	}
-
-	const prefix string = ",\"_id\":"
-	first = false
-	w.RawString(prefix[1:])
-	w.String(string(v.ID))
-
 	if doAllFields || desired["ACCOUNTING_NAME"] {
 		const prefix string = ",\"ACCOUNTING_NAME\":"
 		if first {
