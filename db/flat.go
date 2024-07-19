@@ -26,187 +26,228 @@
 package db
 
 import (
-	"bufio"
-	"encoding/binary"
-	"errors"
-	"fmt"
-	"io"
 	"os"
+	"path/filepath"
+	"strings"
 
 	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
+	"zombiezen.com/go/sqlite"
+	"zombiezen.com/go/sqlite/sqlitex"
 )
 
-type flatDB struct {
-	path       string
-	fileSize   int
-	bufferSize int
+const sqlfileBasename = "sqlite.db"
 
-	f     *os.File
-	w     *bufio.Writer
-	n     int
-	index int
+type flatDB struct {
+	path        string
+	conn        *sqlite.Conn
+	transaction func(*error)
+	closed      bool
 }
 
-func newFlatDB(path string, fileSize, bufferSize int) (*flatDB, error) {
-	f, w, err := createFileAndWriter(path, 0, bufferSize)
+func newFlatDB(dir string) (*flatDB, error) {
+	err := os.MkdirAll(dir, dbDirPerms)
+	if err != nil {
+		return nil, err
+	}
+
+	path := filepath.Join(dir, sqlfileBasename)
+
+	conn, err := prepareSQLiteDB(path)
 	if err != nil {
 		return nil, err
 	}
 
 	return &flatDB{
-		path:       path,
-		fileSize:   fileSize,
-		bufferSize: bufferSize,
-
-		f: f,
-		w: w,
+		path:        path,
+		conn:        conn,
+		transaction: sqlitex.Transaction(conn),
 	}, nil
 }
 
-func createFileAndWriter(path string, index, bufferSize int) (*os.File, *bufio.Writer, error) {
-	err := os.MkdirAll(path, dbDirPerms)
+func prepareSQLiteDB(path string) (*sqlite.Conn, error) {
+	conn, err := sqlite.OpenConn(path)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	f, err := os.Create(fmt.Sprintf("%s/%d", path, index))
-	if err != nil {
-		return nil, nil, err
-	}
+	err = sqlitex.ExecuteTransient(conn, `CREATE TABLE Hits (
+	_id TEXT,
+	timestamp INTEGER,
+	ACCOUNTING_NAME TEXT,
+	USER_NAME TEXT,
+	IsGPU INTEGER,
+	AVAIL_CPU_TIME_SEC INTEGER,
+	Command TEXT,
+	JOB_NAME TEXT,
+	Job TEXT,
+	MEM_REQUESTED_MB INTEGER,
+	MEM_REQUESTED_MB_SEC INTEGER,
+	NUM_EXEC_PROCS INTEGER,
+	PENDING_TIME_SEC INTEGER,
+	QUEUE_NAME TEXT,
+	RUN_TIME_SEC INTEGER,
+	WASTED_CPU_SECONDS REAL,
+	WASTED_MB_SECONDS REAL
+);`, nil)
 
-	w := bufio.NewWriterSize(f, bufferSize)
-
-	return f, w, nil
+	return conn, err
 }
 
-func (f *flatDB) Store(fields ...[]byte) error {
-	total := 0
+func (f *flatDB) Store(hit es.Hit) error {
+	d := hit.Details
 
-	for _, field := range fields {
-		n, err := f.w.Write(field)
-		total += n
-
-		if err != nil {
-			return err
-		}
+	isGPU := 0
+	if strings.HasPrefix(d.QueueName, gpuPrefix) {
+		isGPU = 1
 	}
 
-	f.n += total
-	if f.n > f.fileSize {
-		if err := f.switchToNewFile(); err != nil {
-			return err
-		}
-	}
+	const insert = "INSERT INTO Hits VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17);"
 
-	return nil
-}
+	err := sqlitex.ExecuteTransient(f.conn, insert, &sqlitex.ExecOptions{
+		Args: []any{
+			hit.ID, d.Timestamp, d.AccountingName, d.UserName, isGPU, d.AvailCPUTimeSec,
+			d.Command, d.JobName, d.Job, d.MemRequestedMB, d.MemRequestedMBSec,
+			d.NumExecProcs, d.PendingTimeSec, d.QueueName, d.RunTimeSec, d.WastedCPUSeconds,
+			d.WastedMBSeconds,
+		},
+	})
 
-func (f *flatDB) switchToNewFile() error {
-	err := f.Close()
-	if err != nil {
-		return err
-	}
-
-	f.index++
-
-	file, w, err := createFileAndWriter(f.path, f.index, f.bufferSize)
-	if err != nil {
-		return err
-	}
-
-	f.f = file
-	f.w = w
-	f.n = 0
-
-	return nil
+	return err
 }
 
 func (f *flatDB) Close() error {
-	f.w.Flush()
+	if f.closed {
+		return nil
+	}
 
-	return f.f.Close()
+	var err error
+
+	f.transaction(&err)
+
+	err = f.createIndexes()
+
+	f.closed = true
+
+	if err != nil {
+		f.conn.Close()
+
+		return err
+	}
+
+	return f.conn.Close()
 }
 
-func scrollFlatFile(dbFilePath string, filter *flatFilter, result *es.Result, fields []string, fileBufferSize int) error { //nolint:funlen,gocognit,gocyclo,cyclop,lll
-	f, err := os.Open(dbFilePath)
+func (f *flatDB) createIndexes() error {
+	for _, create := range []string{
+		`CREATE INDEX timestamp on Hits (timestamp);`,
+		`CREATE INDEX accounting_name on Hits (ACCOUNTING_NAME);`,
+		`CREATE INDEX user_name on Hits (USER_NAME);`,
+		`CREATE INDEX isgpu on Hits (IsGPU);`,
+		`CREATE INDEX ta on Hits (timestamp, ACCOUNTING_NAME);`,
+		`CREATE INDEX tag on Hits (timestamp, ACCOUNTING_NAME, IsGPU);`,
+		`CREATE INDEX tau on Hits (timestamp, ACCOUNTING_NAME, USER_NAME);`,
+		`CREATE INDEX taug on Hits (timestamp, ACCOUNTING_NAME, USER_NAME, IsGPU);`,
+	} {
+		err := sqlitex.ExecuteTransient(f.conn, create, nil)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func scrollFlatFile(dbFilePath string, filter *sqlFilter, result *es.Result) error {
+	conn, err := sqlite.OpenConn(dbFilePath, sqlite.OpenReadOnly)
 	if err != nil {
 		return err
 	}
 
-	tsBuf := make([]byte, timeStampWidth)
-	accBuf := make([]byte, accountingNameWidth)
-	userBuf := make([]byte, userNameWidth)
-	lenBuf := make([]byte, lengthEncodeWidth)
-	detailsBuf := make([]byte, es.MaxEncodedDetailsLength)
-	br := bufio.NewReaderSize(f, fileBufferSize)
-	check := filter.PassChecker()
+	defer conn.Close()
 
-	for {
-		_, err = io.ReadFull(br, tsBuf)
-		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				return err
-			}
+	return sqlitex.ExecuteTransient(conn, filter.toSelect(), &sqlitex.ExecOptions{
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			result.AddHitDetails(sqlResultToDetails(stmt, filter))
 
-			break
-		}
+			return nil
+		},
+	})
+}
 
-		check.LT(tsBuf)
+func sqlResultToDetails(stmt *sqlite.Stmt, filter *sqlFilter) *es.Details {
+	var d *es.Details
 
-		if !check.Passes() {
-			break
-		}
+	if len(filter.fields) == 0 {
+		d = getAllFieldsFromSQLResult(stmt)
+	} else {
+		d = getDesiredFieldsFromSQLResult(stmt, filter.fields)
+	}
 
-		check.GTE(tsBuf)
+	d.BOM = filter.bom
 
-		_, err = io.ReadFull(br, accBuf)
-		if err != nil {
-			return err
-		}
+	return d
+}
 
-		check.AccountingName(accBuf)
+func getAllFieldsFromSQLResult(stmt *sqlite.Stmt) *es.Details {
+	return &es.Details{
+		ID:                stmt.ColumnText(0),
+		Timestamp:         stmt.ColumnInt64(1),
+		AccountingName:    stmt.ColumnText(2),   //nolint:mnd
+		UserName:          stmt.ColumnText(3),   //nolint:mnd
+		AvailCPUTimeSec:   stmt.ColumnInt64(5),  //nolint:mnd
+		Command:           stmt.ColumnText(6),   //nolint:mnd
+		JobName:           stmt.ColumnText(7),   //nolint:mnd
+		Job:               stmt.ColumnText(8),   //nolint:mnd
+		MemRequestedMB:    stmt.ColumnInt64(9),  //nolint:mnd
+		MemRequestedMBSec: stmt.ColumnInt64(10), //nolint:mnd
+		NumExecProcs:      stmt.ColumnInt64(11), //nolint:mnd
+		PendingTimeSec:    stmt.ColumnInt64(12), //nolint:mnd
+		QueueName:         stmt.ColumnText(13),  //nolint:mnd
+		RunTimeSec:        stmt.ColumnInt64(14), //nolint:mnd
+		WastedCPUSeconds:  stmt.ColumnFloat(15), //nolint:mnd
+		WastedMBSeconds:   stmt.ColumnFloat(16), //nolint:mnd
+	}
+}
 
-		_, err = io.ReadFull(br, userBuf)
-		if err != nil {
-			return err
-		}
+func getDesiredFieldsFromSQLResult(stmt *sqlite.Stmt, fields []string) *es.Details { //nolint:funlen,gocyclo,cyclop
+	d := &es.Details{
+		ID: stmt.GetText("_id"),
+	}
 
-		check.UserName(userBuf)
-
-		gpuByte, err := br.ReadByte()
-		if err != nil {
-			return err
-		}
-
-		check.GPU(gpuByte)
-
-		_, err = io.ReadFull(br, lenBuf)
-		if err != nil {
-			return err
-		}
-
-		detailsLength := btoi(lenBuf)
-
-		buf := detailsBuf[0:detailsLength]
-
-		_, err = io.ReadFull(br, buf)
-		if err != nil {
-			return err
-		}
-
-		if check.Passes() {
-			d, err := es.DeserializeDetails(buf, fields)
-			if err != nil {
-				return err
-			}
-
-			result.AddHitDetails(d)
+	for _, field := range fields {
+		switch field {
+		case "timestamp":
+			d.Timestamp = stmt.GetInt64(field)
+		case "ACCOUNTING_NAME":
+			d.AccountingName = stmt.GetText(field)
+		case "USER_NAME":
+			d.UserName = stmt.GetText(field)
+		case "AVAIL_CPU_TIME_SEC":
+			d.AvailCPUTimeSec = stmt.GetInt64(field)
+		case "Command":
+			d.Command = stmt.GetText(field)
+		case "JOB_NAME":
+			d.JobName = stmt.GetText(field)
+		case "Job":
+			d.Job = stmt.GetText(field)
+		case "MEM_REQUESTED_MB":
+			d.MemRequestedMB = stmt.GetInt64(field)
+		case "MEM_REQUESTED_MB_SEC":
+			d.MemRequestedMBSec = stmt.GetInt64(field)
+		case "NUM_EXEC_PROCS":
+			d.NumExecProcs = stmt.GetInt64(field)
+		case "PENDING_TIME_SEC":
+			d.PendingTimeSec = stmt.GetInt64(field)
+		case "QUEUE_NAME":
+			d.QueueName = stmt.GetText(field)
+		case "RUN_TIME_SEC":
+			d.RunTimeSec = stmt.GetInt64(field)
+		case "WASTED_CPU_SECONDS":
+			d.WastedCPUSeconds = stmt.GetFloat(field)
+		case "WASTED_MB_SECONDS":
+			d.WastedMBSeconds = stmt.GetFloat(field)
 		}
 	}
 
-	return f.Close()
-}
-
-func btoi(b []byte) int {
-	return int(binary.BigEndian.Uint32(b[0:4]))
+	return d
 }

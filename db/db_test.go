@@ -26,7 +26,6 @@
 package db
 
 import (
-	"encoding/binary"
 	"os"
 	"path/filepath"
 	"sort"
@@ -121,70 +120,14 @@ func TestDB(t *testing.T) {
 			dir = filepath.Join(dir, bomA)
 			entries, err = os.ReadDir(dir)
 			So(err, ShouldBeNil)
-			So(len(entries), ShouldEqual, 15)
+			So(len(entries), ShouldEqual, 1)
 			So(entries[0].Type().IsRegular(), ShouldBeTrue)
-			So(entries[0].Name(), ShouldEqual, "0")
-			So(entries[14].Type().IsRegular(), ShouldBeTrue)
-			So(entries[14].Name(), ShouldEqual, "9")
-			So(entries[6].Type().IsRegular(), ShouldBeTrue)
-			So(entries[6].Name(), ShouldEqual, "14")
-
-			filePath := filepath.Join(dir, "0")
-			b, err := os.ReadFile(filePath)
-			So(err, ShouldBeNil)
-
-			So(len(b), ShouldBeGreaterThanOrEqualTo, fileSize)
-			So(len(b), ShouldBeLessThan, fileSize*2)
-
-			So(b[0:timeStampWidth], ShouldResemble, []byte{0, 0, 0, 0, 101, 190, 211, 129})
-
-			stamp := timeStampBytesToFormatString(b[0:timeStampWidth])
-			So(stamp, ShouldEqual, "2024-02-04T00:00:01Z")
-
-			nextFieldStart := timeStampWidth
-			So(string(b[nextFieldStart:nextFieldStart+accountingNameWidth]), ShouldEqual, "groupA                  ")
-
-			nextFieldStart += accountingNameWidth
-			So(string(b[nextFieldStart:nextFieldStart+userNameWidth]), ShouldEqual, "userA        ")
-
-			nextFieldStart += userNameWidth
-			So(b[nextFieldStart:nextFieldStart+1], ShouldEqual, []byte{notInGPUQueue})
-
-			nextFieldStart++
-			detailsLen := int(binary.BigEndian.Uint32(b[nextFieldStart : nextFieldStart+lengthEncodeWidth]))
-			expectedDetailsLen := 127
-			So(detailsLen, ShouldEqual, expectedDetailsLen)
-
-			nextFieldStart += lengthEncodeWidth
-			detailsBytes := b[nextFieldStart : nextFieldStart+detailsLen]
-			details, err := es.DeserializeDetails(detailsBytes, []string{})
-			So(err, ShouldBeNil)
-
-			timeStamp, err := time.Parse(time.RFC3339, "2024-02-04T00:00:01Z")
-			So(err, ShouldBeNil)
-
-			So(details, ShouldResemble, result.HitSet.Hits[1].Details)
-			So(details.Timestamp, ShouldEqual, timeStamp.Unix())
-			So(details.ID, ShouldEqual, result.HitSet.Hits[1].ID)
-
-			nextFieldStart += detailsLen
-			stamp = timeStampBytesToFormatString(b[nextFieldStart : nextFieldStart+timeStampWidth])
-			So(stamp, ShouldEqual, "2024-02-04T00:00:03Z")
+			So(entries[0].Name(), ShouldEqual, sqlfileBasename)
 
 			dir = filepath.Join(dbDir, "2024", "02", "05", bomA)
 			entries, err = os.ReadDir(dir)
 			So(err, ShouldBeNil)
-			So(len(entries), ShouldEqual, 15)
-
-			filePath = filepath.Join(dir, "14")
-			b, err = os.ReadFile(filePath)
-			So(err, ShouldBeNil)
-
-			nextFieldStart = len(b) - expectedDetailsLen
-			detailsBytes = b[nextFieldStart:]
-			details, err = es.DeserializeDetails(detailsBytes, []string{})
-			So(err, ShouldBeNil)
-			So(details, ShouldResemble, result.HitSet.Hits[expectedNumHits-1].Details)
+			So(len(entries), ShouldEqual, 1)
 
 			Convey("Which you can then retrieve via Scroll() and Usernames()", func() {
 				query := &es.Query{
@@ -287,10 +230,10 @@ func TestDB(t *testing.T) {
 					return retrieved.HitSet.Hits[i].Details.Timestamp < retrieved.HitSet.Hits[j].Details.Timestamp
 				})
 
-				stamp = time.Unix(retrieved.HitSet.Hits[0].Details.Timestamp, 0).UTC().Format(time.RFC3339)
+				stamp := time.Unix(retrieved.HitSet.Hits[0].Details.Timestamp, 0).UTC().Format(time.RFC3339)
 				So(stamp, ShouldEqual, "2024-02-05T00:00:01Z")
 
-				stamp = time.Unix(retrieved.HitSet.Hits[1].Details.Timestamp, 0).UTC().Format(time.RFC3339)
+				// stamp = time.Unix(retrieved.HitSet.Hits[1].Details.Timestamp, 0).UTC().Format(time.RFC3339)
 
 				So(retrieved.HitSet.Hits[0].Details.UserName, ShouldNotBeBlank)
 				So(retrieved.HitSet.Hits[0].Details.AccountingName, ShouldBeBlank)
@@ -378,7 +321,7 @@ func makeResult(gte, lte time.Time) *es.Result {
 			AccountingName:    aName,
 			UserName:          uName,
 			QueueName:         qName,
-			Command:           "cmd",
+			Command:           "cmd' DELETE * FROM * Where * == *",
 			JobName:           jName,
 			Job:               "job",
 			MemRequestedMB:    1,
@@ -399,10 +342,6 @@ func makeResult(gte, lte time.Time) *es.Result {
 	}
 
 	return result
-}
-
-func timeStampBytesToFormatString(b []byte) string {
-	return time.Unix(int64(binary.BigEndian.Uint64(b)), 0).UTC().Format(time.RFC3339)
 }
 
 func makeFiles(paths ...string) error {

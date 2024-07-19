@@ -26,7 +26,7 @@
 package db
 
 import (
-	"bytes"
+	"fmt"
 	"strings"
 	"time"
 
@@ -35,39 +35,45 @@ import (
 
 const ErrNoBOM = "query does not specify a BOM"
 
-type flatFilter struct {
-	BOM             string
-	LT              time.Time
-	LTE             time.Time
-	GTE             time.Time
-	LTKey           []byte
-	LTEKey          []byte
-	GTEKey          []byte
-	accountingName  []byte
-	userName        []byte
+type sqlFilter struct {
+	LT              int64
+	LTE             int64
+	GTE             int64
+	bom             string
+	accountingName  string
+	userName        string
+	checkLTE        bool
 	checkAccounting bool
 	checkUser       bool
 	checkGPU        bool
-	checkLTE        bool
+	fields          []string
 }
 
-func newFlatFilter(query *es.Query) (*flatFilter, error) {
+func newSQLFilter(query *es.Query) (*sqlFilter, error) { //nolint:funlen
 	lt, lte, gte, err := query.DateRange()
 	if err != nil {
 		return nil, err
 	}
 
-	filter := &flatFilter{
-		LT:       lt,
-		LTE:      lte,
-		GTE:      gte,
-		checkLTE: !lte.IsZero(),
+	filters := query.Filters()
+
+	filter := &sqlFilter{
+		LT:             lt.Unix(),
+		LTE:            lte.Unix(),
+		GTE:            gte.Unix(),
+		checkLTE:       !lte.IsZero(),
+		bom:            filters["BOM"],
+		accountingName: filters["ACCOUNTING_NAME"],
+		userName:       filters["USER_NAME"],
+		fields:         query.Source,
 	}
 
-	filter.LTKey, filter.LTEKey, filter.GTEKey = i64tob(lt.Unix()), i64tob(lte.Unix()), i64tob(gte.Unix())
-	filter.BOM, filter.accountingName, filter.userName, filter.checkGPU = queryToFilters(query)
+	qname, ok := filters["QUEUE_NAME"]
+	if ok && strings.HasPrefix(qname, gpuPrefix) {
+		filter.checkGPU = true
+	}
 
-	if filter.BOM == "" {
+	if filter.bom == "" {
 		return nil, Error{Msg: ErrNoBOM}
 	}
 
@@ -77,113 +83,46 @@ func newFlatFilter(query *es.Query) (*flatFilter, error) {
 	return filter, nil
 }
 
-func (f *flatFilter) beyondLastDate(current time.Time) bool {
+func (f *sqlFilter) beyondLastDate(current time.Time) bool {
+	cu := current.Unix()
+
 	if f.checkLTE {
-		return current.After(f.LTE)
+		return cu > f.LTE
 	}
 
-	return current.Equal(f.LT) || current.After(f.LT)
+	return cu == f.LT || cu > f.LT
 }
 
-func queryToFilters(query *es.Query) (bom string, accountingName, userName []byte, checkGPU bool) {
-	filters := query.Filters()
-
-	bom = filters["BOM"]
-
-	aname, ok := filters["ACCOUNTING_NAME"]
-	if ok {
-		if b, err := fixedWidthField(aname, accountingNameWidth); err == nil {
-			accountingName = b
-		}
+func (f *sqlFilter) toSelect() string { //nolint:funlen
+	fields := "*"
+	if len(f.fields) > 0 {
+		fields = "_id, " + strings.Join(f.fields, ", ")
 	}
 
-	uname, ok := filters["USER_NAME"]
-	if ok {
-		if b, err := fixedWidthField(uname, userNameWidth); err == nil {
-			userName = b
-		}
+	var clauses []string
+
+	lComp := "<"
+	lVal := f.LT
+
+	if f.checkLTE {
+		lComp = "<="
+		lVal = f.LTE
 	}
 
-	qname, ok := filters["QUEUE_NAME"]
-	if ok && strings.HasPrefix(qname, gpuPrefix) {
-		checkGPU = true
+	clauses = append(clauses, fmt.Sprintf("(timestamp %s %d)", lComp, lVal))
+	clauses = append(clauses, fmt.Sprintf("(timestamp >= %d)", f.GTE))
+
+	if f.checkAccounting {
+		clauses = append(clauses, fmt.Sprintf("(ACCOUNTING_NAME = '%s')", f.accountingName))
 	}
 
-	return bom, accountingName, userName, checkGPU
-}
-
-type passChecker struct {
-	filter  *flatFilter
-	passing bool
-}
-
-// PassChecker returns a new passChecker that can be used in a goroutine to see
-// if values all pass the filter.
-func (f *flatFilter) PassChecker() *passChecker {
-	return &passChecker{filter: f, passing: true}
-}
-
-// Fail will cause Passes() to return false.
-func (p *passChecker) Fail() {
-	p.passing = false
-}
-
-// LT sees if the given timestamp is less than (or less than or equal to,
-// depending on what was set in the filter) the filter's LT/LTE value. This
-// should be the first method you use in a loop as it overrides Passes() return
-// value.
-func (p *passChecker) LT(timestamp []byte) {
-	if p.filter.checkLTE {
-		p.passing = bytes.Compare(timestamp, p.filter.LTEKey) <= 0
-	} else {
-		p.passing = bytes.Compare(timestamp, p.filter.LTKey) < 0
-	}
-}
-
-// GTE sees if the given timestamp is greater than or equal to the filter's GTE
-// value. Does nothing if we're already not passing.
-func (p *passChecker) GTE(timestamp []byte) {
-	if !p.passing {
-		return
+	if f.checkUser {
+		clauses = append(clauses, fmt.Sprintf("(USER_NAME = '%s')", f.userName))
 	}
 
-	p.passing = bytes.Compare(timestamp, p.filter.GTEKey) >= 0
-}
-
-// AccountingName sees if the given accounting name matches the filter's. Does
-// nothing if we're already not passing, or the filter doesn't have an
-// accounting name.
-func (p *passChecker) AccountingName(val []byte) {
-	if !p.passing || !p.filter.checkAccounting {
-		return
+	if f.checkGPU {
+		clauses = append(clauses, "(IsGPU = 1)")
 	}
 
-	p.passing = bytes.Equal(val, p.filter.accountingName)
-}
-
-// UserName sees if the given user name matches the filter's. Does nothing if
-// we're already not passing, or the filter doesn't have a user name.
-func (p *passChecker) UserName(val []byte) {
-	if !p.passing || !p.filter.checkUser {
-		return
-	}
-
-	p.passing = bytes.Equal(val, p.filter.userName)
-}
-
-// GPU sees if the given value matches the inGPUQueue value. Does nothing if
-// we're already not passing, or the filter doesn't check for GPU queue
-// membership.
-func (p *passChecker) GPU(val byte) {
-	if !p.passing || !p.filter.checkGPU {
-		return
-	}
-
-	p.passing = val == inGPUQueue
-}
-
-// Passes returns true if Fail() hasn't been called and none of the filter check
-// methods failed since the last Reset().
-func (p *passChecker) Passes() bool {
-	return p.passing
+	return fmt.Sprintf("SELECT %s FROM Hits WHERE %s", fields, strings.Join(clauses, " AND "))
 }

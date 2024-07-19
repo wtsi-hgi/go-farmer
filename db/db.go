@@ -26,14 +26,12 @@
 package db
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -127,7 +125,7 @@ type DB struct {
 	bufferSize      int
 	bufPool         *benc.BufPool
 	dbs             map[string]*flatDB
-	dateBOMDirs     map[string][]string
+	dateBOMDirs     map[string]string
 	updateFrequency time.Duration
 	latestDate      time.Time
 	stopMonitoring  chan bool
@@ -151,7 +149,7 @@ func New(config Config) (*DB, error) {
 		bufferSize:      config.BufferSizeOrDefault(),
 		bufPool:         benc.NewBufPool(benc.WithBufferSize(es.MaxEncodedDetailsLength)),
 		dbs:             make(map[string]*flatDB),
-		dateBOMDirs:     make(map[string][]string),
+		dateBOMDirs:     make(map[string]string),
 		updateFrequency: config.UpdateFrequencyOrDefault(),
 	}
 
@@ -183,7 +181,7 @@ func (d *DB) findAllFlatFiles(dir string) error {
 		d.mu.Lock()
 		defer d.mu.Unlock()
 
-		d.dateBOMDirs[subDir] = append(d.dateBOMDirs[subDir], path)
+		d.dateBOMDirs[subDir] = path
 
 		return d.updateLatestDate(filepath.Dir(subDir))
 	})
@@ -256,64 +254,17 @@ func (d *DB) findLatestFlatFiles() {
 // need to Close() this DB and make a New() one to Scroll() the stored hits.
 func (d *DB) Store(result *es.Result) error {
 	for _, hit := range result.HitSet.Hits {
-		group, user, isGPU, encodedDetails, err := d.getFixedWidthFields(hit)
-		if err != nil {
-			return err
-		}
-
 		fdb, err := d.createOrGetFlatDB(hit.Details.Timestamp, hit.Details.BOM)
 		if err != nil {
 			return err
 		}
 
-		if err = fdb.Store(
-			i64tob(hit.Details.Timestamp),
-			group,
-			user,
-			[]byte{isGPU},
-			i32tob(int32(len(encodedDetails))),
-			encodedDetails,
-		); err != nil {
+		if err = fdb.Store(hit); err != nil {
 			return err
 		}
 	}
 
 	return nil
-}
-
-func (d *DB) getFixedWidthFields(hit es.Hit) ([]byte, []byte, byte, []byte, error) {
-	group, err := fixedWidthField(hit.Details.AccountingName, accountingNameWidth)
-	if err != nil {
-		return nil, nil, 0, nil, err
-	}
-
-	user, err := fixedWidthField(hit.Details.UserName, userNameWidth)
-	if err != nil {
-		return nil, nil, 0, nil, err
-	}
-
-	isGPU := notInGPUQueue
-	if strings.HasPrefix(hit.Details.QueueName, gpuPrefix) {
-		isGPU = inGPUQueue
-	}
-
-	hit.Details.ID = hit.ID
-
-	encodedDetails, err := hit.Details.Serialize(d.bufPool) //nolint:misspell
-	if err != nil {
-		return nil, nil, 0, nil, err
-	}
-
-	return group, user, isGPU, encodedDetails, nil
-}
-
-func fixedWidthField(str string, width int) ([]byte, error) {
-	padding := width - len(str)
-	if padding < 0 {
-		return nil, Error{Msg: ErrFieldTooLong, cause: fmt.Sprintf("'%s' is > %d characters", str, width)}
-	}
-
-	return []byte(str + strings.Repeat(" ", padding)), nil
 }
 
 func (d *DB) createOrGetFlatDB(timeStamp int64, bom string) (*flatDB, error) {
@@ -326,7 +277,7 @@ func (d *DB) createOrGetFlatDB(timeStamp int64, bom string) (*flatDB, error) {
 	if !ok {
 		var err error
 
-		fdb, err = newFlatDB(filepath.Join(d.dir, key), d.fileSize, d.bufferSize)
+		fdb, err = newFlatDB(filepath.Join(d.dir, key))
 		if err != nil {
 			return nil, err
 		}
@@ -337,28 +288,11 @@ func (d *DB) createOrGetFlatDB(timeStamp int64, bom string) (*flatDB, error) {
 	return fdb, nil
 }
 
-// i64tob returns an 8-byte big endian representation of v. The result is a
-// sortable byte representation of something like a unix time stamp in seconds.
-func i64tob(v int64) []byte {
-	b := make([]byte, timeStampWidth)
-	binary.BigEndian.PutUint64(b, uint64(v))
-
-	return b
-}
-
-// i32tob is like i64tob, but for int32s.
-func i32tob(v int32) []byte {
-	b := make([]byte, lengthEncodeWidth)
-	binary.BigEndian.PutUint32(b, uint32(v))
-
-	return b
-}
-
 // Scroll returns all the hits that pass certain match and prefix filter terms
 // in the given query, in the query's timestamp date range (which must be
 // expressed with specific lte and gte RFC3339 values).
 func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
-	filter, err := newFlatFilter(query)
+	filter, err := newSQLFilter(query)
 	if err != nil {
 		return nil, err
 	}
@@ -367,7 +301,7 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 
 	var wg sync.WaitGroup
 
-	d.scrollRequestedDays(&wg, filter, result, query.Source)
+	d.scrollRequestedDays(&wg, filter, result)
 
 	wg.Wait()
 
@@ -381,15 +315,19 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 	return result, nil
 }
 
-func (d *DB) scrollRequestedDays(wg *sync.WaitGroup, filter *flatFilter, result *es.Result, fields []string) {
-	currentDay := filter.GTE
+func (d *DB) scrollRequestedDays(wg *sync.WaitGroup, filter *sqlFilter, result *es.Result) {
+	currentDay := time.Unix(filter.GTE, 0)
 
 	for {
 		d.mu.RLock()
-		paths := d.dateBOMDirs[filepath.Join(d.dateFolder(currentDay), filter.BOM)]
+		path, found := d.dateBOMDirs[filepath.Join(d.dateFolder(currentDay), filter.bom)]
 		d.mu.RUnlock()
 
-		d.scrollFlatFilesAndHandleErrors(wg, paths, filter, result, fields)
+		if !found {
+			break
+		}
+
+		d.scrollFlatFilesAndHandleErrors(wg, path, filter, result)
 
 		currentDay = currentDay.Add(oneDay)
 
@@ -403,19 +341,17 @@ func (d *DB) dateFolder(day time.Time) string {
 	return fmt.Sprintf("%s/%s", d.dir, day.UTC().Format(dateFormat))
 }
 
-func (d *DB) scrollFlatFilesAndHandleErrors(wg *sync.WaitGroup, paths []string,
-	filter *flatFilter, result *es.Result, fields []string) {
-	wg.Add(len(paths))
+func (d *DB) scrollFlatFilesAndHandleErrors(wg *sync.WaitGroup, path string,
+	filter *sqlFilter, result *es.Result) {
+	wg.Add(1)
 
-	for _, path := range paths {
-		go func(dbFilePath string) {
-			defer wg.Done()
+	go func() {
+		defer wg.Done()
 
-			if err := scrollFlatFile(dbFilePath, filter, result, fields, d.bufferSize); err != nil {
-				result.AddError(err)
-			}
-		}(path)
-	}
+		if err := scrollFlatFile(path, filter, result); err != nil {
+			result.AddError(err)
+		}
+	}()
 }
 
 // Usernames is like Scroll(), but picks out and returns only the unique
