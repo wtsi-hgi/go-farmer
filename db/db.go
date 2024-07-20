@@ -172,7 +172,7 @@ func (d *DB) findAllFlatFiles(dir string) error {
 			return err
 		}
 
-		if !de.Type().IsRegular() || de.Name() == successBasename {
+		if !de.Type().IsRegular() || de.Name() != sqlfileBasename {
 			return nil
 		}
 

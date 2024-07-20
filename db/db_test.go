@@ -253,10 +253,10 @@ func TestDB(t *testing.T) {
 				db.mu.RUnlock()
 
 				febDir := filepath.Join(dbDir, "2024", "02")
-				olderFile := filepath.Join(febDir, "03", bomA, "0")
-				newerFile := filepath.Join(febDir, "08", bomA, "0")
+				olderFile := filepath.Join(febDir, "03", bomA, sqlfileBasename)
+				newerFile := filepath.Join(febDir, "08", bomA, sqlfileBasename)
 				today := time.Now().Format(dateFormat)
-				newestFile := filepath.Join(dbDir, today, bomA, "0")
+				newestFile := filepath.Join(dbDir, today, bomA, sqlfileBasename)
 
 				err = makeFiles(olderFile, newerFile, newestFile)
 				So(err, ShouldBeNil)
