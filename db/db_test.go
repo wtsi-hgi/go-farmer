@@ -290,6 +290,26 @@ func TestDB(t *testing.T) {
 					Query: &es.QueryFilter{Bool: es.QFBool{Filter: es.Filter{
 						{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
 						bomMatch,
+						uMatch,
+						{"range": map[string]interface{}{
+							"timestamp": map[string]string{
+								"lte":    lteStr,
+								"gte":    gteStr,
+								"format": "strict_date_optional_time",
+							},
+						}},
+					}}},
+				}
+
+				retrieved, err = db.Scroll(query)
+				So(err, ShouldBeNil)
+				So(retrieved.HitSet, ShouldNotBeNil)
+				So(len(retrieved.HitSet.Hits), ShouldEqual, 76800)
+
+				query = &es.Query{
+					Query: &es.QueryFilter{Bool: es.QFBool{Filter: es.Filter{
+						{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
+						bomMatch,
 						{"range": map[string]interface{}{
 							"timestamp": map[string]string{
 								"lte":    "2024-02-05T00:00:04Z",

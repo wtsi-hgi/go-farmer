@@ -243,6 +243,28 @@ func demo(config *YAMLConfig, period int) { //nolint:funlen,gocognit,gocyclo
 		return cq.Scroll(teamQuery)
 	})
 
+	userQuery := &es.Query{
+		Size: es.MaxSize,
+		Sort: []string{"_doc"},
+		Query: &es.QueryFilter{Bool: es.QFBool{Filter: es.Filter{
+			{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
+			{"range": map[string]interface{}{
+				"timestamp": map[string]string{
+					"lte":    lte,
+					"gte":    gte,
+					"format": "strict_date_optional_time",
+				},
+			}},
+			{"match_phrase": map[string]interface{}{"BOM": "Human Genetics"}},
+			{"match_phrase": map[string]interface{}{"ACCOUNTING_NAME": "hgi"}},
+			{"match_phrase": map[string]interface{}{"USER_NAME": "sb10"}},
+		}}},
+	}
+
+	timeSearch("non-agg query, user", func() ([]byte, error) {
+		return cq.Scroll(userQuery)
+	})
+
 	gpuQuery := &es.Query{
 		Size: es.MaxSize,
 		Sort: []string{"_doc"},

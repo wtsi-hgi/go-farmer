@@ -190,6 +190,7 @@ func (e *flatIndexEntry) Passes(check *passChecker) (bool, bool) {
 type flatIndex struct {
 	bomEntries       []*flatIndexEntry
 	groupEntries     map[string][]*flatIndexEntry
+	userEntries      map[string][]*flatIndexEntry
 	groupUserEntries map[string][]*flatIndexEntry
 
 	dataPath string
@@ -208,6 +209,7 @@ func newFlatIndex(path string, fileBufferSize int) (*flatIndex, error) { //nolin
 	fi := &flatIndex{
 		dataPath:         strings.TrimSuffix(path, indexKind) + dataKind,
 		groupEntries:     make(map[string][]*flatIndexEntry),
+		userEntries:      make(map[string][]*flatIndexEntry),
 		groupUserEntries: make(map[string][]*flatIndexEntry),
 	}
 
@@ -263,9 +265,10 @@ func newFlatIndex(path string, fileBufferSize int) (*flatIndex, error) { //nolin
 
 		fi.bomEntries = append(fi.bomEntries, entry)
 		fi.groupEntries[group] = append(fi.groupEntries[group], entry)
+		fi.userEntries[user] = append(fi.userEntries[user], entry)
 
-		userKey := group + entriesKeySeparator + user
-		fi.groupUserEntries[userKey] = append(fi.groupUserEntries[userKey], entry)
+		groupUserKey := group + entriesKeySeparator + user
+		fi.groupUserEntries[groupUserKey] = append(fi.groupUserEntries[groupUserKey], entry)
 	}
 
 	errc := f.Close()
@@ -313,7 +316,11 @@ func (f *flatIndex) getEntries(filter *flatFilter) []*flatIndexEntry {
 	entries := f.bomEntries
 
 	if filter.checkUser {
-		entries = f.groupUserEntries[filter.accountingName+entriesKeySeparator+filter.userName]
+		if filter.checkAccounting {
+			entries = f.groupUserEntries[filter.accountingName+entriesKeySeparator+filter.userName]
+		} else {
+			entries = f.userEntries[filter.userName]
+		}
 	} else if filter.checkAccounting {
 		entries = f.groupEntries[filter.accountingName]
 	}
