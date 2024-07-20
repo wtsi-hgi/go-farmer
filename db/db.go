@@ -157,9 +157,9 @@ func New(config Config) (*DB, error) {
 
 	_, err := os.Stat(config.Directory)
 	if err == nil {
-		err = db.findAllFlatFiles(db.dir)
+		err = db.loadAllFlatIndexes(db.dir)
 		if err == nil {
-			db.monitorFlatFiles()
+			db.monitorFlatIndexes()
 		}
 	} else {
 		err = os.MkdirAll(config.Directory, dbDirPerms)
@@ -168,7 +168,7 @@ func New(config Config) (*DB, error) {
 	return db, err
 }
 
-func (d *DB) findAllFlatFiles(dir string) error {
+func (d *DB) loadAllFlatIndexes(dir string) error {
 	return filepath.WalkDir(dir, func(path string, de fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -212,7 +212,7 @@ func (d *DB) updateLatestDate(dateDir string) error {
 	return nil
 }
 
-func (d *DB) monitorFlatFiles() {
+func (d *DB) monitorFlatIndexes() {
 	ticker := time.NewTicker(d.updateFrequency)
 	d.stopMonitoring = make(chan bool)
 
@@ -220,7 +220,7 @@ func (d *DB) monitorFlatFiles() {
 		for {
 			select {
 			case <-ticker.C:
-				d.findLatestFlatFiles()
+				d.loadLatestFlatIndexes()
 			case <-d.stopMonitoring:
 				ticker.Stop()
 
@@ -230,7 +230,7 @@ func (d *DB) monitorFlatFiles() {
 	}()
 }
 
-func (d *DB) findLatestFlatFiles() {
+func (d *DB) loadLatestFlatIndexes() {
 	currentDay := d.latestDate.Add(oneDay)
 	maxDay := time.Now()
 
@@ -239,9 +239,9 @@ func (d *DB) findLatestFlatFiles() {
 
 		_, err := os.Stat(dateFolder)
 		if err == nil {
-			err = d.findAllFlatFiles(dateFolder)
+			err = d.loadAllFlatIndexes(dateFolder)
 			if err != nil {
-				slog.Error("findLatestFlatFiles failed", "err", err)
+				slog.Error("loadAllFlatIndexes failed", "err", err)
 			}
 		}
 
