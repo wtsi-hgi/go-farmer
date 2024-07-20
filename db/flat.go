@@ -38,8 +38,9 @@ import (
 )
 
 const (
-	indexKind = "index"
-	dataKind  = "data"
+	indexKind           = "index"
+	dataKind            = "data"
+	entriesKeySeparator = "."
 )
 
 type flatDB struct {
@@ -164,12 +165,11 @@ func (f *flatDB) Close() error {
 }
 
 type flatIndexEntry struct {
-	timeStamp      []byte
-	accountingName []byte
-	userName       []byte
-	gpu            byte
-	index          int64
-	length         int
+	timeStamp []byte
+	gpu       byte
+	userName  string
+	index     int64
+	length    int
 }
 
 // Passes first bool will be false if LT doesn't pass. The second bool will be
@@ -182,16 +182,17 @@ func (e *flatIndexEntry) Passes(check *passChecker) (bool, bool) {
 	}
 
 	check.GTE(e.timeStamp)
-	check.AccountingName(e.accountingName)
-	check.UserName(e.userName)
 	check.GPU(e.gpu)
 
 	return true, check.Passes()
 }
 
 type flatIndex struct {
+	bomEntries       []*flatIndexEntry
+	groupEntries     map[string][]*flatIndexEntry
+	groupUserEntries map[string][]*flatIndexEntry
+
 	dataPath string
-	entries  []*flatIndexEntry
 	fh       *os.File
 	lastPos  int64
 }
@@ -205,7 +206,9 @@ func newFlatIndex(path string, fileBufferSize int) (*flatIndex, error) { //nolin
 	br := bufio.NewReaderSize(f, fileBufferSize)
 
 	fi := &flatIndex{
-		dataPath: strings.TrimSuffix(path, indexKind) + dataKind,
+		dataPath:         strings.TrimSuffix(path, indexKind) + dataKind,
+		groupEntries:     make(map[string][]*flatIndexEntry),
+		groupUserEntries: make(map[string][]*flatIndexEntry),
 	}
 
 	for {
@@ -228,14 +231,10 @@ func newFlatIndex(path string, fileBufferSize int) (*flatIndex, error) { //nolin
 			return nil, err
 		}
 
-		entry.accountingName = accBuf
-
 		userBuf := make([]byte, userNameWidth)
 		if _, err = io.ReadFull(br, userBuf); err != nil {
 			return nil, err
 		}
-
-		entry.userName = userBuf
 
 		gpuByte, err := br.ReadByte()
 		if err != nil {
@@ -258,7 +257,15 @@ func newFlatIndex(path string, fileBufferSize int) (*flatIndex, error) { //nolin
 
 		entry.length = btoi(lenBuf)
 
-		fi.entries = append(fi.entries, entry)
+		group := strings.TrimSpace(string(accBuf))
+		user := strings.TrimSpace(string(userBuf))
+		entry.userName = user
+
+		fi.bomEntries = append(fi.bomEntries, entry)
+		fi.groupEntries[group] = append(fi.groupEntries[group], entry)
+
+		userKey := group + entriesKeySeparator + user
+		fi.groupUserEntries[userKey] = append(fi.groupUserEntries[userKey], entry)
 	}
 
 	errc := f.Close()
@@ -271,11 +278,12 @@ func btoi(b []byte) int {
 }
 
 func (f *flatIndex) Scroll(filter *flatFilter, result *es.Result, fields []string) error {
+	entries := f.getEntries(filter)
 	check := filter.PassChecker()
 
 	defer f.close()
 
-	for _, entry := range f.entries {
+	for _, entry := range entries {
 		continueOK, passes := entry.Passes(check)
 		if !continueOK {
 			break
@@ -299,6 +307,18 @@ func (f *flatIndex) Scroll(filter *flatFilter, result *es.Result, fields []strin
 	}
 
 	return nil
+}
+
+func (f *flatIndex) getEntries(filter *flatFilter) []*flatIndexEntry {
+	entries := f.bomEntries
+
+	if filter.checkUser {
+		entries = f.groupUserEntries[filter.accountingName+entriesKeySeparator+filter.userName]
+	} else if filter.checkAccounting {
+		entries = f.groupEntries[filter.accountingName]
+	}
+
+	return entries
 }
 
 func (f *flatIndex) close() {
@@ -348,11 +368,12 @@ func (f *flatIndex) openDataFile() error {
 }
 
 func (f *flatIndex) Usernames(filter *flatFilter) map[string]bool {
+	entries := f.getEntries(filter)
 	check := filter.PassChecker()
 
 	usernames := make(map[string]bool)
 
-	for _, entry := range f.entries {
+	for _, entry := range entries {
 		continueOK, passes := entry.Passes(check)
 		if !continueOK {
 			break
@@ -362,7 +383,7 @@ func (f *flatIndex) Usernames(filter *flatFilter) map[string]bool {
 			continue
 		}
 
-		usernames[string(entry.userName)] = true
+		usernames[entry.userName] = true
 	}
 
 	return usernames

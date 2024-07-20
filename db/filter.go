@@ -43,8 +43,8 @@ type flatFilter struct {
 	LTKey           []byte
 	LTEKey          []byte
 	GTEKey          []byte
-	accountingName  []byte
-	userName        []byte
+	accountingName  string
+	userName        string
 	checkAccounting bool
 	checkUser       bool
 	checkGPU        bool
@@ -85,24 +85,12 @@ func (f *flatFilter) beyondLastDate(current time.Time) bool {
 	return current.Equal(f.LT) || current.After(f.LT)
 }
 
-func queryToFilters(query *es.Query) (bom string, accountingName, userName []byte, checkGPU bool) {
+func queryToFilters(query *es.Query) (bom, accountingName, userName string, checkGPU bool) {
 	filters := query.Filters()
 
 	bom = filters["BOM"]
-
-	aname, ok := filters["ACCOUNTING_NAME"]
-	if ok {
-		if b, err := fixedWidthField(aname, accountingNameWidth); err == nil {
-			accountingName = b
-		}
-	}
-
-	uname, ok := filters["USER_NAME"]
-	if ok {
-		if b, err := fixedWidthField(uname, userNameWidth); err == nil {
-			userName = b
-		}
-	}
+	accountingName = filters["ACCOUNTING_NAME"]
+	userName = filters["USER_NAME"]
 
 	qname, ok := filters["QUEUE_NAME"]
 	if ok && strings.HasPrefix(qname, gpuPrefix) {
@@ -148,27 +136,6 @@ func (p *passChecker) GTE(timestamp []byte) {
 	}
 
 	p.passing = bytes.Compare(timestamp, p.filter.GTEKey) >= 0
-}
-
-// AccountingName sees if the given accounting name matches the filter's. Does
-// nothing if we're already not passing, or the filter doesn't have an
-// accounting name.
-func (p *passChecker) AccountingName(val []byte) {
-	if !p.passing || !p.filter.checkAccounting {
-		return
-	}
-
-	p.passing = bytes.Equal(val, p.filter.accountingName)
-}
-
-// UserName sees if the given user name matches the filter's. Does nothing if
-// we're already not passing, or the filter doesn't have a user name.
-func (p *passChecker) UserName(val []byte) {
-	if !p.passing || !p.filter.checkUser {
-		return
-	}
-
-	p.passing = bytes.Equal(val, p.filter.userName)
 }
 
 // GPU sees if the given value matches the inGPUQueue value. Does nothing if
