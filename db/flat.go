@@ -346,3 +346,24 @@ func (f *flatIndex) openDataFile() error {
 
 	return nil
 }
+
+func (f *flatIndex) Usernames(filter *flatFilter) map[string]bool {
+	check := filter.PassChecker()
+
+	usernames := make(map[string]bool)
+
+	for _, entry := range f.entries {
+		continueOK, passes := entry.Passes(check)
+		if !continueOK {
+			break
+		}
+
+		if !passes {
+			continue
+		}
+
+		usernames[string(entry.userName)] = true
+	}
+
+	return usernames
+}

@@ -428,11 +428,11 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 
 	result := es.NewResult()
 
-	var wg sync.WaitGroup
-
-	d.scrollRequestedDays(&wg, filter, result, query.Source)
-
-	wg.Wait()
+	d.operateOnRequestedDays(filter, func(fi *flatIndex) {
+		if err := fi.Scroll(filter, result, query.Source); err != nil {
+			result.AddError(err)
+		}
+	})
 
 	errors := result.Errors()
 	if len(errors) > 0 {
@@ -444,7 +444,9 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 	return result, nil
 }
 
-func (d *DB) scrollRequestedDays(wg *sync.WaitGroup, filter *flatFilter, result *es.Result, fields []string) {
+func (d *DB) operateOnRequestedDays(filter *flatFilter, cb func(*flatIndex)) {
+	var wg sync.WaitGroup
+
 	currentDay := filter.GTE
 
 	for {
@@ -452,7 +454,15 @@ func (d *DB) scrollRequestedDays(wg *sync.WaitGroup, filter *flatFilter, result 
 		indexes := d.dateBOMDirs[filepath.Join(d.dateFolder(currentDay), filter.BOM)]
 		d.mu.RUnlock()
 
-		d.scrollFlatFilesAndHandleErrors(wg, indexes, filter, result, fields)
+		wg.Add(len(indexes))
+
+		for _, index := range indexes {
+			go func(dbIndex *flatIndex) {
+				defer wg.Done()
+
+				cb(dbIndex)
+			}(index)
+		}
 
 		currentDay = currentDay.Add(oneDay)
 
@@ -460,40 +470,36 @@ func (d *DB) scrollRequestedDays(wg *sync.WaitGroup, filter *flatFilter, result 
 			break
 		}
 	}
+
+	wg.Wait()
 }
 
 func (d *DB) dateFolder(day time.Time) string {
 	return fmt.Sprintf("%s/%s", d.dir, day.UTC().Format(dateFormat))
 }
 
-func (d *DB) scrollFlatFilesAndHandleErrors(wg *sync.WaitGroup, indexes []*flatIndex,
-	filter *flatFilter, result *es.Result, fields []string) {
-	wg.Add(len(indexes))
-
-	for _, index := range indexes {
-		go func(dbIndex *flatIndex) {
-			defer wg.Done()
-
-			if err := dbIndex.Scroll(filter, result, fields); err != nil {
-				result.AddError(err)
-			}
-		}(index)
-	}
-}
-
 // Usernames is like Scroll(), but picks out and returns only the unique
 // usernames from amongst the Hits.
 func (d *DB) Usernames(query *es.Query) ([]string, error) {
-	r, err := d.Scroll(query)
+	filter, err := newFlatFilter(query)
 	if err != nil {
 		return nil, err
 	}
 
+	var mu sync.Mutex
+
 	usernamesMap := make(map[string]bool)
 
-	for _, hit := range r.HitSet.Hits {
-		usernamesMap[hit.Details.UserName] = true
-	}
+	d.operateOnRequestedDays(filter, func(fi *flatIndex) {
+		theseUsernames := fi.Usernames(filter)
+
+		mu.Lock()
+		defer mu.Unlock()
+
+		for name := range theseUsernames {
+			usernamesMap[strings.TrimSpace(name)] = true
+		}
+	})
 
 	usernames := make([]string, 0, len(usernamesMap))
 	for username := range usernamesMap {

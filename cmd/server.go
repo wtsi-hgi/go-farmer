@@ -71,10 +71,15 @@ a fixed fake answer since we handle scrolls during search.)
 			die("failed to create real elasticsearch client: %s", err)
 		}
 
+		info("loading local database indexes")
+		t := time.Now()
+
 		ldb, err := db.New(config.ToDBConfig(), true)
 		if err != nil {
 			die("failed to open local database: %s", err)
 		}
+
+		info("load took %s, server now ready", time.Since(t))
 
 		defer func() {
 			err = ldb.Close()
