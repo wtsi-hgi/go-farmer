@@ -376,9 +376,8 @@ func (d *DB) closeAndClearStored() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	for _, db := range d.dbs {
-		err := db.Close()
-		if err != nil {
+	for _, fdb := range d.dbs {
+		if err := fdb.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
 			return err
 		}
 	}
@@ -389,7 +388,7 @@ func (d *DB) closeAndClearStored() error {
 }
 
 func (d *DB) createOrGetFlatDB(day, bom string) (*flatDB, error) {
-	key := fmt.Sprintf("%s/%s", day, bom)
+	key := filepath.Join(day, bom)
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
