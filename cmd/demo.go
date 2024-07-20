@@ -256,7 +256,6 @@ func demo(config *YAMLConfig, period int) { //nolint:funlen,gocognit,gocyclo
 				},
 			}},
 			{"match_phrase": map[string]interface{}{"BOM": "Human Genetics"}},
-			{"match_phrase": map[string]interface{}{"ACCOUNTING_NAME": "hgi"}},
 			{"match_phrase": map[string]interface{}{"USER_NAME": "sb10"}},
 		}}},
 	}
