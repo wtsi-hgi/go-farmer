@@ -37,6 +37,7 @@ import (
 
 	"github.com/deneonet/benc"
 	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
+	"zombiezen.com/go/sqlite"
 )
 
 const (
@@ -117,15 +118,15 @@ func (c Config) UpdateFrequencyOrDefault() time.Duration {
 	return c.UpdateFrequency
 }
 
-// DB represents a local database that uses a number of flat files to store
+// DB represents a local database that uses a number of sqlite files to store
 // elasticsearch hit details and return them quickly.
 type DB struct {
 	dir             string
 	fileSize        int
 	bufferSize      int
 	bufPool         *benc.BufPool
-	dbs             map[string]*flatDB
-	dateBOMDirs     map[string]string
+	dbs             map[string]*sqlDB
+	dateBOMDirs     map[string]*sqlite.Conn
 	updateFrequency time.Duration
 	latestDate      time.Time
 	stopMonitoring  chan bool
@@ -148,16 +149,16 @@ func New(config Config) (*DB, error) {
 		fileSize:        config.FileSizeOrDefault(),
 		bufferSize:      config.BufferSizeOrDefault(),
 		bufPool:         benc.NewBufPool(benc.WithBufferSize(es.MaxEncodedDetailsLength)),
-		dbs:             make(map[string]*flatDB),
-		dateBOMDirs:     make(map[string]string),
+		dbs:             make(map[string]*sqlDB),
+		dateBOMDirs:     make(map[string]*sqlite.Conn),
 		updateFrequency: config.UpdateFrequencyOrDefault(),
 	}
 
 	_, err := os.Stat(config.Directory)
 	if err == nil {
-		err = db.findAllFlatFiles(db.dir)
+		err = db.openAllSQLDBs(db.dir)
 		if err == nil {
-			db.monitorFlatFiles()
+			db.monitorSQLFiles()
 		}
 	} else {
 		err = os.MkdirAll(config.Directory, dbDirPerms)
@@ -166,7 +167,7 @@ func New(config Config) (*DB, error) {
 	return db, err
 }
 
-func (d *DB) findAllFlatFiles(dir string) error {
+func (d *DB) openAllSQLDBs(dir string) error {
 	return filepath.WalkDir(dir, func(path string, de fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -181,7 +182,12 @@ func (d *DB) findAllFlatFiles(dir string) error {
 		d.mu.Lock()
 		defer d.mu.Unlock()
 
-		d.dateBOMDirs[subDir] = path
+		conn, err := sqlite.OpenConn(path, sqlite.OpenReadOnly)
+		if err != nil {
+			return err
+		}
+
+		d.dateBOMDirs[subDir] = conn
 
 		return d.updateLatestDate(filepath.Dir(subDir))
 	})
@@ -205,7 +211,7 @@ func (d *DB) updateLatestDate(dateDir string) error {
 	return nil
 }
 
-func (d *DB) monitorFlatFiles() {
+func (d *DB) monitorSQLFiles() {
 	ticker := time.NewTicker(d.updateFrequency)
 	d.stopMonitoring = make(chan bool)
 
@@ -213,7 +219,7 @@ func (d *DB) monitorFlatFiles() {
 		for {
 			select {
 			case <-ticker.C:
-				d.findLatestFlatFiles()
+				d.findLatestSQLFiles()
 			case <-d.stopMonitoring:
 				ticker.Stop()
 
@@ -223,7 +229,7 @@ func (d *DB) monitorFlatFiles() {
 	}()
 }
 
-func (d *DB) findLatestFlatFiles() {
+func (d *DB) findLatestSQLFiles() {
 	currentDay := d.latestDate.Add(oneDay)
 	maxDay := time.Now()
 
@@ -232,9 +238,9 @@ func (d *DB) findLatestFlatFiles() {
 
 		_, err := os.Stat(dateFolder)
 		if err == nil {
-			err = d.findAllFlatFiles(dateFolder)
+			err = d.openAllSQLDBs(dateFolder)
 			if err != nil {
-				slog.Error("findLatestFlatFiles failed", "err", err)
+				slog.Error("findLatestSQLFiles failed", "err", err)
 			}
 		}
 
@@ -246,7 +252,7 @@ func (d *DB) findLatestFlatFiles() {
 	}
 }
 
-// Store stores the Details in the Hits of the given Result in flat database
+// Store stores the Details in the Hits of the given Result in sqlite database
 // files in our directory, that can later be retrieved via Scroll(). Call
 // Close() after using this for the last time.
 //
@@ -254,7 +260,7 @@ func (d *DB) findLatestFlatFiles() {
 // need to Close() this DB and make a New() one to Scroll() the stored hits.
 func (d *DB) Store(result *es.Result) error {
 	for _, hit := range result.HitSet.Hits {
-		fdb, err := d.createOrGetFlatDB(hit.Details.Timestamp, hit.Details.BOM)
+		fdb, err := d.createOrGetSQLDB(hit.Details.Timestamp, hit.Details.BOM)
 		if err != nil {
 			return err
 		}
@@ -267,7 +273,7 @@ func (d *DB) Store(result *es.Result) error {
 	return nil
 }
 
-func (d *DB) createOrGetFlatDB(timeStamp int64, bom string) (*flatDB, error) {
+func (d *DB) createOrGetSQLDB(timeStamp int64, bom string) (*sqlDB, error) {
 	key := fmt.Sprintf("%s/%s", time.Unix(timeStamp, 0).UTC().Format(dateFormat), bom)
 
 	d.mu.Lock()
@@ -277,7 +283,7 @@ func (d *DB) createOrGetFlatDB(timeStamp int64, bom string) (*flatDB, error) {
 	if !ok {
 		var err error
 
-		fdb, err = newFlatDB(filepath.Join(d.dir, key))
+		fdb, err = newSQLDB(filepath.Join(d.dir, key))
 		if err != nil {
 			return nil, err
 		}
@@ -320,14 +326,14 @@ func (d *DB) scrollRequestedDays(wg *sync.WaitGroup, filter *sqlFilter, result *
 
 	for {
 		d.mu.RLock()
-		path, found := d.dateBOMDirs[filepath.Join(d.dateFolder(currentDay), filter.bom)]
+		conn, found := d.dateBOMDirs[filepath.Join(d.dateFolder(currentDay), filter.bom)]
 		d.mu.RUnlock()
 
 		if !found {
 			break
 		}
 
-		d.scrollFlatFilesAndHandleErrors(wg, path, filter, result)
+		d.scrollSQLFilesAndHandleErrors(wg, conn, filter, result)
 
 		currentDay = currentDay.Add(oneDay)
 
@@ -341,14 +347,14 @@ func (d *DB) dateFolder(day time.Time) string {
 	return fmt.Sprintf("%s/%s", d.dir, day.UTC().Format(dateFormat))
 }
 
-func (d *DB) scrollFlatFilesAndHandleErrors(wg *sync.WaitGroup, path string,
+func (d *DB) scrollSQLFilesAndHandleErrors(wg *sync.WaitGroup, conn *sqlite.Conn,
 	filter *sqlFilter, result *es.Result) {
 	wg.Add(1)
 
 	go func() {
 		defer wg.Done()
 
-		if err := scrollFlatFile(path, filter, result); err != nil {
+		if err := scrollSQL(conn, filter, result); err != nil {
 			result.AddError(err)
 		}
 	}()
@@ -387,6 +393,10 @@ func (d *DB) Close() error {
 
 	if d.stopMonitoring != nil {
 		d.stopMonitoring <- true
+	}
+
+	for _, conn := range d.dateBOMDirs {
+		conn.Close()
 	}
 
 	return nil

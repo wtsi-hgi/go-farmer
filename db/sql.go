@@ -37,14 +37,14 @@ import (
 
 const sqlfileBasename = "sqlite.db"
 
-type flatDB struct {
+type sqlDB struct {
 	path        string
 	conn        *sqlite.Conn
 	transaction func(*error)
 	closed      bool
 }
 
-func newFlatDB(dir string) (*flatDB, error) {
+func newSQLDB(dir string) (*sqlDB, error) {
 	err := os.MkdirAll(dir, dbDirPerms)
 	if err != nil {
 		return nil, err
@@ -57,7 +57,7 @@ func newFlatDB(dir string) (*flatDB, error) {
 		return nil, err
 	}
 
-	return &flatDB{
+	return &sqlDB{
 		path:        path,
 		conn:        conn,
 		transaction: sqlitex.Transaction(conn),
@@ -93,7 +93,7 @@ func prepareSQLiteDB(path string) (*sqlite.Conn, error) {
 	return conn, err
 }
 
-func (f *flatDB) Store(hit es.Hit) error {
+func (f *sqlDB) Store(hit es.Hit) error {
 	d := hit.Details
 
 	isGPU := 0
@@ -115,7 +115,7 @@ func (f *flatDB) Store(hit es.Hit) error {
 	return err
 }
 
-func (f *flatDB) Close() error {
+func (f *sqlDB) Close() error {
 	if f.closed {
 		return nil
 	}
@@ -137,7 +137,7 @@ func (f *flatDB) Close() error {
 	return f.conn.Close()
 }
 
-func (f *flatDB) createIndexes() error {
+func (f *sqlDB) createIndexes() error {
 	for _, create := range []string{
 		`CREATE INDEX timestamp on Hits (timestamp);`,
 		`CREATE INDEX accounting_name on Hits (ACCOUNTING_NAME);`,
@@ -157,14 +157,7 @@ func (f *flatDB) createIndexes() error {
 	return nil
 }
 
-func scrollFlatFile(dbFilePath string, filter *sqlFilter, result *es.Result) error {
-	conn, err := sqlite.OpenConn(dbFilePath, sqlite.OpenReadOnly)
-	if err != nil {
-		return err
-	}
-
-	defer conn.Close()
-
+func scrollSQL(conn *sqlite.Conn, filter *sqlFilter, result *es.Result) error {
 	return sqlitex.ExecuteTransient(conn, filter.toSelect(), &sqlitex.ExecOptions{
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			result.AddHitDetails(sqlResultToDetails(stmt, filter))
