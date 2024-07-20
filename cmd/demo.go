@@ -44,6 +44,7 @@ const (
 
 var demoPeriod string
 var demoDebug bool
+var demoFirst bool
 
 var demoCmd = &cobra.Command{
 	Use:   "demo",
@@ -60,6 +61,9 @@ database and in-memory caching.
 
 Optionally supply -p month to query 40 days of data, or -p days for 3 days.
 Default is -p mins for 10 minutes of data.
+
+Optionally, say --debug for extra timing info, and --first to show the full
+details of the first result of each query.
 `,
 	Run: func(_ *cobra.Command, _ []string) {
 		config := ParseConfig()
@@ -92,6 +96,8 @@ func init() {
 		"period of time to pull results for; mins for 10mins, days for 3 days, month for a month")
 	demoCmd.Flags().BoolVarP(&demoDebug, "debug", "d", false,
 		"output additional debug info")
+	demoCmd.Flags().BoolVarP(&demoFirst, "first", "f", false,
+		"output details of first result for each query")
 }
 
 func demo(config *YAMLConfig, period int) { //nolint:funlen,gocognit,gocyclo
@@ -185,7 +191,11 @@ func demo(config *YAMLConfig, period int) { //nolint:funlen,gocognit,gocyclo
 		},
 	}
 
-	timeSearch(func() ([]byte, error) {
+	timeSearch("aggregation query", func() ([]byte, error) {
+		return cq.Search(bomQuery)
+	})
+
+	timeSearch("aggregation query (cached)", func() ([]byte, error) {
 		return cq.Search(bomQuery)
 	})
 
@@ -216,15 +226,20 @@ func demo(config *YAMLConfig, period int) { //nolint:funlen,gocognit,gocyclo
 		}}},
 	}
 
-	timeSearch(func() ([]byte, error) {
+	timeSearch("non-agg query, whole BOM", func() ([]byte, error) {
 		return cq.Scroll(teamQuery)
 	})
 
-	timeSearch(func() ([]byte, error) {
-		return cq.Search(bomQuery)
+	timeSearch("non-agg query, whole BOM (repeated with no cache)", func() ([]byte, error) {
+		cq2, err := cache.New(client, ldb, 1)
+		if err != nil {
+			die("failed to create a second LRU cache: %s", err)
+		}
+
+		return cq2.Scroll(teamQuery)
 	})
 
-	timeSearch(func() ([]byte, error) {
+	timeSearch("non-agg query, whole BOM (cached)", func() ([]byte, error) {
 		return cq.Scroll(teamQuery)
 	})
 }
@@ -255,7 +270,10 @@ func initDB(client *es.Client, config db.Config, p int) error {
 	return db.Backfill(client, config, from, period)
 }
 
-func timeSearch(cb func() ([]byte, error)) { //nolint:gocyclo
+func timeSearch(msg string, cb func() ([]byte, error)) {
+	cliPrint("\n---------------------------\n")
+	cliPrint(msg + ":\n")
+
 	t := time.Now()
 
 	data, err := cb()
@@ -270,21 +288,32 @@ func timeSearch(cb func() ([]byte, error)) { //nolint:gocyclo
 		die("error decoding: %s", err)
 	}
 
-	if len(result.HitSet.Hits) > 0 {
-		cliPrint("num hits: %+v\n", len(result.HitSet.Hits))
+	printAggInfo(result)
+	printHitInfo(result)
 
-		if demoDebug {
-			cliPrint("first hit: %+v\n", result.HitSet.Hits[0].Details)
-		}
+	cliPrint("---------------------------\n")
+}
+
+func printAggInfo(result *es.Result) {
+	if result.Aggregations == nil || len(result.Aggregations.Stats.Buckets) == 0 {
+		return
 	}
 
-	if result.Aggregations != nil && len(result.Aggregations.Stats.Buckets) > 0 {
-		cliPrint("num aggs: %+v\n", len(result.Aggregations.Stats.Buckets))
+	cliPrint("num aggs: %+v\n", len(result.Aggregations.Stats.Buckets))
 
-		if demoDebug {
-			cliPrint("first agg: %+v\n", result.Aggregations.Stats.Buckets[0])
-		}
+	if demoFirst {
+		cliPrint("first agg: %+v\n", result.Aggregations.Stats.Buckets[0])
+	}
+}
+
+func printHitInfo(result *es.Result) {
+	if len(result.HitSet.Hits) == 0 {
+		return
 	}
 
-	cliPrint("\n")
+	cliPrint("num hits: %+v\n", len(result.HitSet.Hits))
+
+	if demoFirst {
+		cliPrint("first hit: %+v\n", result.HitSet.Hits[0].Details)
+	}
 }
