@@ -55,7 +55,7 @@ type Scroller interface {
 // If the configured database directory already has any results for a particular
 // day, that day will be skipped.
 func Backfill(client Scroller, config Config, from time.Time, period time.Duration) (err error) {
-	ldb, errn := New(config)
+	ldb, errn := New(config, true)
 	if errn != nil {
 		err = errn
 

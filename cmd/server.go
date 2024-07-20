@@ -71,7 +71,7 @@ a fixed fake answer since we handle scrolls during search.)
 			die("failed to create real elasticsearch client: %s", err)
 		}
 
-		ldb, err := db.New(config.ToDBConfig())
+		ldb, err := db.New(config.ToDBConfig(), true)
 		if err != nil {
 			die("failed to open local database: %s", err)
 		}

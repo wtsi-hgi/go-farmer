@@ -39,6 +39,7 @@ import (
 
 	"github.com/deneonet/benc"
 	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -122,16 +123,17 @@ func (c Config) UpdateFrequencyOrDefault() time.Duration {
 // DB represents a local database that uses a number of flat files to store
 // elasticsearch hit details and return them quickly.
 type DB struct {
-	dir             string
-	fileSize        int
-	bufferSize      int
-	bufPool         *benc.BufPool
-	dbs             map[string]*flatDB
-	dateBOMDirs     map[string][]*flatIndex
-	updateFrequency time.Duration
-	latestDate      time.Time
-	stopMonitoring  chan bool
-	mu              sync.RWMutex
+	dir                  string
+	fileSize             int
+	bufferSize           int
+	bufPool              *benc.BufPool
+	dbs                  map[string]*flatDB
+	dateBOMDirs          map[string][]*flatIndex
+	updateFrequency      time.Duration
+	checkBackfillSuccess bool
+	latestDate           time.Time
+	stopMonitoring       chan bool
+	mu                   sync.RWMutex
 }
 
 // New returns a DB that will create or use the database files in the configured
@@ -144,15 +146,19 @@ type DB struct {
 // day, the configured UpdateFrequency is used to update the DB's knowledge of
 // available local database files, so that queries will make use of any added
 // data over time. This defaults to checking for new files ever hour.
-func New(config Config) (*DB, error) {
+//
+// If you're using Backfill, then provide a true bool to only load successful
+// whole day database files.
+func New(config Config, checkBackfillSuccess bool) (*DB, error) {
 	db := &DB{
-		dir:             config.Directory,
-		fileSize:        config.FileSizeOrDefault(),
-		bufferSize:      config.BufferSizeOrDefault(),
-		bufPool:         benc.NewBufPool(benc.WithBufferSize(es.MaxEncodedDetailsLength)),
-		dbs:             make(map[string]*flatDB),
-		dateBOMDirs:     make(map[string][]*flatIndex),
-		updateFrequency: config.UpdateFrequencyOrDefault(),
+		dir:                  config.Directory,
+		fileSize:             config.FileSizeOrDefault(),
+		bufferSize:           config.BufferSizeOrDefault(),
+		bufPool:              benc.NewBufPool(benc.WithBufferSize(es.MaxEncodedDetailsLength)),
+		dbs:                  make(map[string]*flatDB),
+		dateBOMDirs:          make(map[string][]*flatIndex),
+		updateFrequency:      config.UpdateFrequencyOrDefault(),
+		checkBackfillSuccess: checkBackfillSuccess,
 	}
 
 	_, err := os.Stat(config.Directory)
@@ -169,7 +175,9 @@ func New(config Config) (*DB, error) {
 }
 
 func (d *DB) loadAllFlatIndexes(dir string) error {
-	return filepath.WalkDir(dir, func(path string, de fs.DirEntry, err error) error {
+	eg := errgroup.Group{}
+
+	err := filepath.WalkDir(dir, func(path string, de fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -178,20 +186,46 @@ func (d *DB) loadAllFlatIndexes(dir string) error {
 			return nil
 		}
 
-		subDir := filepath.Dir(path)
+		d.loadFlatIndexIfOK(path, &eg)
 
-		d.mu.Lock()
-		defer d.mu.Unlock()
-
-		fi, err := newFlatIndex(path, d.bufferSize)
-		if err != nil {
-			return err
-		}
-
-		d.dateBOMDirs[subDir] = append(d.dateBOMDirs[subDir], fi)
-
-		return d.updateLatestDate(filepath.Dir(subDir))
+		return nil
 	})
+
+	errg := eg.Wait()
+
+	if err == nil {
+		err = errg
+	}
+
+	return err
+}
+
+func (d *DB) loadFlatIndexIfOK(path string, eg *errgroup.Group) {
+	subDir := filepath.Dir(path)
+
+	if d.checkBackfillSuccess {
+		if _, err := os.Stat(filepath.Join(filepath.Dir(subDir), successBasename)); err != nil {
+			return
+		}
+	}
+
+	eg.Go(func() error {
+		return d.loadFlatIndexAndUpdateLatestDate(path, subDir)
+	})
+}
+
+func (d *DB) loadFlatIndexAndUpdateLatestDate(path, subDir string) error {
+	fi, err := newFlatIndex(path, d.bufferSize)
+	if err != nil {
+		return err
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.dateBOMDirs[subDir] = append(d.dateBOMDirs[subDir], fi)
+
+	return d.updateLatestDate(filepath.Dir(subDir))
 }
 
 func (d *DB) updateLatestDate(dateDir string) error {
@@ -260,13 +294,23 @@ func (d *DB) loadLatestFlatIndexes() {
 // NB: What you Store() with this DB will not be available to Scroll(). You will
 // need to Close() this DB and make a New() one to Scroll() the stored hits.
 func (d *DB) Store(result *es.Result) error {
+	prevDay := ""
+
 	for _, hit := range result.HitSet.Hits {
 		group, user, isGPU, encodedDetails, err := d.getFixedWidthFields(hit)
 		if err != nil {
 			return err
 		}
 
-		fdb, err := d.createOrGetFlatDB(hit.Details.Timestamp, hit.Details.BOM)
+		day := timestampToDay(hit.Details.Timestamp)
+		if day != prevDay {
+			err = d.closeAndClearStored()
+			if err != nil {
+				return err
+			}
+		}
+
+		fdb, err := d.createOrGetFlatDB(day, hit.Details.BOM)
 		if err != nil {
 			return err
 		}
@@ -282,6 +326,8 @@ func (d *DB) Store(result *es.Result) error {
 		); err != nil {
 			return err
 		}
+
+		prevDay = day
 	}
 
 	return nil
@@ -322,8 +368,28 @@ func fixedWidthField(str string, width int) ([]byte, error) {
 	return []byte(str + strings.Repeat(" ", padding)), nil
 }
 
-func (d *DB) createOrGetFlatDB(timeStamp int64, bom string) (*flatDB, error) {
-	key := fmt.Sprintf("%s/%s", time.Unix(timeStamp, 0).UTC().Format(dateFormat), bom)
+func timestampToDay(timeStamp int64) string {
+	return time.Unix(timeStamp, 0).UTC().Format(dateFormat)
+}
+
+func (d *DB) closeAndClearStored() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	for _, db := range d.dbs {
+		err := db.Close()
+		if err != nil {
+			return err
+		}
+	}
+
+	d.dbs = make(map[string]*flatDB)
+
+	return nil
+}
+
+func (d *DB) createOrGetFlatDB(day, bom string) (*flatDB, error) {
+	key := fmt.Sprintf("%s/%s", day, bom)
 
 	d.mu.Lock()
 	defer d.mu.Unlock()

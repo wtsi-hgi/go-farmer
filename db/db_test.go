@@ -53,7 +53,7 @@ func TestDB(t *testing.T) {
 			BufferSize: bufferSize,
 		}
 
-		db, err := New(config)
+		db, err := New(config, false)
 		So(err, ShouldBeNil)
 		So(db, ShouldNotBeNil)
 
@@ -231,7 +231,7 @@ func TestDB(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(retrieved.HitSet.Hits, ShouldBeNil)
 
-				db, err = New(config)
+				db, err = New(config, false)
 				So(err, ShouldBeNil)
 
 				retrieved, err = db.Scroll(query)
@@ -324,7 +324,7 @@ func TestDB(t *testing.T) {
 
 			Convey("A DB's knowledge of available flat files updates over time", func() {
 				config.UpdateFrequency = updateFrequency
-				db, err = New(config)
+				db, err = New(config, false)
 				So(err, ShouldBeNil)
 
 				db.mu.RLock()

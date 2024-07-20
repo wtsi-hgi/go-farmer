@@ -118,7 +118,7 @@ func demo(config *YAMLConfig, period int) { //nolint:funlen,gocognit,gocyclo
 		return
 	}
 
-	ldb, err := db.New(config.ToDBConfig())
+	ldb, err := db.New(config.ToDBConfig(), true)
 	if err != nil {
 		die("failed to open local database: %s", err)
 	}

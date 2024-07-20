@@ -85,7 +85,7 @@ func TestBackfill(t *testing.T) {
 		query.Query.Bool.Filter = append(query.Query.Bool.Filter,
 			map[string]es.MapStringStringOrMap{"match_phrase": map[string]interface{}{"BOM": bom}})
 
-		db, err := New(config)
+		db, err := New(config, true)
 		So(err, ShouldBeNil)
 
 		result, errs := db.Scroll(query)
@@ -208,7 +208,7 @@ func realBackfillTest(client Scroller, config Config, from time.Time, period tim
 	So(indexFirst, ShouldBeLessThan, indexSecond)
 	So(indexSecond, ShouldBeLessThan, indexThird)
 
-	db, err := New(config)
+	db, err := New(config, true)
 	So(err, ShouldBeNil)
 
 	total := 0
