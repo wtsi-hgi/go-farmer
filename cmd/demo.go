@@ -226,11 +226,11 @@ func demo(config *YAMLConfig, period int) { //nolint:funlen,gocognit,gocyclo
 		}}},
 	}
 
-	timeSearch("non-agg query, whole BOM", func() ([]byte, error) {
+	timeSearch("non-agg query, large team", func() ([]byte, error) {
 		return cq.Scroll(teamQuery)
 	})
 
-	timeSearch("non-agg query, whole BOM (repeated with no cache)", func() ([]byte, error) {
+	timeSearch("non-agg query, large team (repeated with no cache)", func() ([]byte, error) {
 		cq2, err := cache.New(client, ldb, 1)
 		if err != nil {
 			die("failed to create a second LRU cache: %s", err)
@@ -239,8 +239,30 @@ func demo(config *YAMLConfig, period int) { //nolint:funlen,gocognit,gocyclo
 		return cq2.Scroll(teamQuery)
 	})
 
-	timeSearch("non-agg query, whole BOM (cached)", func() ([]byte, error) {
+	timeSearch("non-agg query, large team (cached)", func() ([]byte, error) {
 		return cq.Scroll(teamQuery)
+	})
+
+	gpuQuery := &es.Query{
+		Size: es.MaxSize,
+		Sort: []string{"_doc"},
+		Query: &es.QueryFilter{Bool: es.QFBool{Filter: es.Filter{
+			{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
+			{"range": map[string]interface{}{
+				"timestamp": map[string]string{
+					"lte":    lte,
+					"gte":    gte,
+					"format": "strict_date_optional_time",
+				},
+			}},
+			{"match_phrase": map[string]interface{}{"BOM": "Human Genetics"}},
+			{"match_phrase": map[string]interface{}{"ACCOUNTING_NAME": "hgi"}},
+			{"prefix": map[string]interface{}{"QUEUE_NAME": "gpu"}},
+		}}},
+	}
+
+	timeSearch("non-agg query, gpu", func() ([]byte, error) {
+		return cq.Scroll(gpuQuery)
 	})
 }
 
