@@ -127,7 +127,7 @@ type DB struct {
 	bufferSize      int
 	bufPool         *benc.BufPool
 	dbs             map[string]*flatDB
-	dateBOMDirs     map[string][]string
+	dateBOMDirs     map[string][]*flatIndex
 	updateFrequency time.Duration
 	latestDate      time.Time
 	stopMonitoring  chan bool
@@ -151,7 +151,7 @@ func New(config Config) (*DB, error) {
 		bufferSize:      config.BufferSizeOrDefault(),
 		bufPool:         benc.NewBufPool(benc.WithBufferSize(es.MaxEncodedDetailsLength)),
 		dbs:             make(map[string]*flatDB),
-		dateBOMDirs:     make(map[string][]string),
+		dateBOMDirs:     make(map[string][]*flatIndex),
 		updateFrequency: config.UpdateFrequencyOrDefault(),
 	}
 
@@ -174,7 +174,7 @@ func (d *DB) findAllFlatFiles(dir string) error {
 			return err
 		}
 
-		if !de.Type().IsRegular() || de.Name() == successBasename {
+		if !de.Type().IsRegular() || !strings.HasSuffix(de.Name(), indexKind) {
 			return nil
 		}
 
@@ -183,7 +183,12 @@ func (d *DB) findAllFlatFiles(dir string) error {
 		d.mu.Lock()
 		defer d.mu.Unlock()
 
-		d.dateBOMDirs[subDir] = append(d.dateBOMDirs[subDir], path)
+		fi, err := newFlatIndex(path, d.bufferSize)
+		if err != nil {
+			return err
+		}
+
+		d.dateBOMDirs[subDir] = append(d.dateBOMDirs[subDir], fi)
 
 		return d.updateLatestDate(filepath.Dir(subDir))
 	})
@@ -267,11 +272,12 @@ func (d *DB) Store(result *es.Result) error {
 		}
 
 		if err = fdb.Store(
-			i64tob(hit.Details.Timestamp),
-			group,
-			user,
-			[]byte{isGPU},
-			i32tob(int32(len(encodedDetails))),
+			[][]byte{
+				i64tob(hit.Details.Timestamp),
+				group,
+				user,
+				{isGPU},
+			},
 			encodedDetails,
 		); err != nil {
 			return err
@@ -346,14 +352,6 @@ func i64tob(v int64) []byte {
 	return b
 }
 
-// i32tob is like i64tob, but for int32s.
-func i32tob(v int32) []byte {
-	b := make([]byte, lengthEncodeWidth)
-	binary.BigEndian.PutUint32(b, uint32(v))
-
-	return b
-}
-
 // Scroll returns all the hits that pass certain match and prefix filter terms
 // in the given query, in the query's timestamp date range (which must be
 // expressed with specific lte and gte RFC3339 values).
@@ -386,10 +384,10 @@ func (d *DB) scrollRequestedDays(wg *sync.WaitGroup, filter *flatFilter, result 
 
 	for {
 		d.mu.RLock()
-		paths := d.dateBOMDirs[filepath.Join(d.dateFolder(currentDay), filter.BOM)]
+		indexes := d.dateBOMDirs[filepath.Join(d.dateFolder(currentDay), filter.BOM)]
 		d.mu.RUnlock()
 
-		d.scrollFlatFilesAndHandleErrors(wg, paths, filter, result, fields)
+		d.scrollFlatFilesAndHandleErrors(wg, indexes, filter, result, fields)
 
 		currentDay = currentDay.Add(oneDay)
 
@@ -403,18 +401,18 @@ func (d *DB) dateFolder(day time.Time) string {
 	return fmt.Sprintf("%s/%s", d.dir, day.UTC().Format(dateFormat))
 }
 
-func (d *DB) scrollFlatFilesAndHandleErrors(wg *sync.WaitGroup, paths []string,
+func (d *DB) scrollFlatFilesAndHandleErrors(wg *sync.WaitGroup, indexes []*flatIndex,
 	filter *flatFilter, result *es.Result, fields []string) {
-	wg.Add(len(paths))
+	wg.Add(len(indexes))
 
-	for _, path := range paths {
-		go func(dbFilePath string) {
+	for _, index := range indexes {
+		go func(dbIndex *flatIndex) {
 			defer wg.Done()
 
-			if err := scrollFlatFile(dbFilePath, filter, result, fields, d.bufferSize); err != nil {
+			if err := dbIndex.Scroll(filter, result, fields); err != nil {
 				result.AddError(err)
 			}
-		}(path)
+		}(index)
 	}
 }
 

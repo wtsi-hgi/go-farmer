@@ -32,68 +32,92 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
 )
 
+const (
+	indexKind = "index"
+	dataKind  = "data"
+)
+
 type flatDB struct {
-	path       string
-	fileSize   int
-	bufferSize int
+	dir             string
+	desiredFileSize int
+	bufferSize      int
 
-	f     *os.File
-	w     *bufio.Writer
-	n     int
-	index int
+	indexF *os.File
+	indexW *bufio.Writer
+
+	dataF         *os.File
+	dataW         *bufio.Writer
+	dataPos       int
+	dataFileIndex int
 }
 
-func newFlatDB(path string, fileSize, bufferSize int) (*flatDB, error) {
-	f, w, err := createFileAndWriter(path, 0, bufferSize)
-	if err != nil {
-		return nil, err
+func newFlatDB(dir string, fileSize, bufferSize int) (*flatDB, error) {
+	f := &flatDB{
+		dir:             dir,
+		desiredFileSize: fileSize,
+		bufferSize:      bufferSize,
 	}
 
-	return &flatDB{
-		path:       path,
-		fileSize:   fileSize,
-		bufferSize: bufferSize,
+	err := f.createFilesAndWriters()
 
-		f: f,
-		w: w,
-	}, nil
+	return f, err
 }
 
-func createFileAndWriter(path string, index, bufferSize int) (*os.File, *bufio.Writer, error) {
-	err := os.MkdirAll(path, dbDirPerms)
+func (f *flatDB) createFilesAndWriters() error {
+	var err error
+
+	f.indexF, f.indexW, err = f.createFileAndWriter(indexKind)
+	if err != nil {
+		return err
+	}
+
+	f.dataF, f.dataW, err = f.createFileAndWriter(dataKind)
+
+	return err
+}
+
+func (f *flatDB) createFileAndWriter(kind string) (*os.File, *bufio.Writer, error) {
+	err := os.MkdirAll(f.dir, dbDirPerms)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	f, err := os.Create(fmt.Sprintf("%s/%d", path, index))
+	fh, err := os.Create(fmt.Sprintf("%s/%d.%s", f.dir, f.dataFileIndex, kind))
 	if err != nil {
 		return nil, nil, err
 	}
 
-	w := bufio.NewWriterSize(f, bufferSize)
+	w := bufio.NewWriterSize(fh, f.bufferSize)
 
-	return f, w, nil
+	return fh, w, nil
 }
 
-func (f *flatDB) Store(fields ...[]byte) error {
-	total := 0
+func (f *flatDB) Store(indexFields [][]byte, data []byte) error {
+	n, err := f.dataW.Write(data)
+	if err != nil {
+		return err
+	}
 
-	for _, field := range fields {
-		n, err := f.w.Write(field)
-		total += n
+	dataIndex := i32tob(int32(f.dataPos))
+	dataLen := i32tob(int32(len(data)))
+	indexFields = append(indexFields, dataIndex, dataLen)
+
+	for _, field := range indexFields {
+		_, err := f.indexW.Write(field)
 
 		if err != nil {
 			return err
 		}
 	}
 
-	f.n += total
-	if f.n > f.fileSize {
-		if err := f.switchToNewFile(); err != nil {
+	f.dataPos += n
+	if f.dataPos > f.desiredFileSize {
+		if err := f.switchToNewFiles(); err != nil {
 			return err
 		}
 	}
@@ -101,112 +125,224 @@ func (f *flatDB) Store(fields ...[]byte) error {
 	return nil
 }
 
-func (f *flatDB) switchToNewFile() error {
+// i32tob is like i64tob, but for int32s.
+func i32tob(v int32) []byte {
+	b := make([]byte, lengthEncodeWidth)
+	binary.BigEndian.PutUint32(b, uint32(v))
+
+	return b
+}
+
+func (f *flatDB) switchToNewFiles() error {
 	err := f.Close()
 	if err != nil {
 		return err
 	}
 
-	f.index++
+	f.dataFileIndex++
 
-	file, w, err := createFileAndWriter(f.path, f.index, f.bufferSize)
+	err = f.createFilesAndWriters()
 	if err != nil {
 		return err
 	}
 
-	f.f = file
-	f.w = w
-	f.n = 0
+	f.dataPos = 0
 
 	return nil
 }
 
 func (f *flatDB) Close() error {
-	f.w.Flush()
+	f.indexW.Flush()
+	f.dataW.Flush()
 
-	return f.f.Close()
-}
-
-func scrollFlatFile(dbFilePath string, filter *flatFilter, result *es.Result, fields []string, fileBufferSize int) error { //nolint:funlen,gocognit,gocyclo,cyclop,lll
-	f, err := os.Open(dbFilePath)
+	err := f.indexF.Close()
 	if err != nil {
 		return err
 	}
 
-	tsBuf := make([]byte, timeStampWidth)
-	accBuf := make([]byte, accountingNameWidth)
-	userBuf := make([]byte, userNameWidth)
-	lenBuf := make([]byte, lengthEncodeWidth)
-	detailsBuf := make([]byte, es.MaxEncodedDetailsLength)
+	return f.dataF.Close()
+}
+
+type flatIndexEntry struct {
+	timeStamp      []byte
+	accountingName []byte
+	userName       []byte
+	gpu            byte
+	index          int64
+	length         int
+}
+
+// Passes first bool will be false if LT doesn't pass. The second bool will be
+// true if everything passed the passChecker.
+func (e *flatIndexEntry) Passes(check *passChecker) (bool, bool) {
+	check.LT(e.timeStamp)
+
+	if !check.Passes() {
+		return false, false
+	}
+
+	check.GTE(e.timeStamp)
+	check.AccountingName(e.accountingName)
+	check.UserName(e.userName)
+	check.GPU(e.gpu)
+
+	return true, check.Passes()
+}
+
+type flatIndex struct {
+	dataPath string
+	entries  []*flatIndexEntry
+	fh       *os.File
+	lastPos  int64
+}
+
+func newFlatIndex(path string, fileBufferSize int) (*flatIndex, error) { //nolint:funlen,gocognit,gocyclo
+	f, erro := os.Open(path)
+	if erro != nil {
+		return nil, erro
+	}
+
 	br := bufio.NewReaderSize(f, fileBufferSize)
-	check := filter.PassChecker()
+
+	fi := &flatIndex{
+		dataPath: strings.TrimSuffix(path, indexKind) + dataKind,
+	}
 
 	for {
-		_, err = io.ReadFull(br, tsBuf)
+		entry := &flatIndexEntry{}
+
+		tsBuf := make([]byte, timeStampWidth)
+		_, err := io.ReadFull(br, tsBuf)
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
-				return err
+				return nil, err
 			}
 
 			break
 		}
 
-		check.LT(tsBuf)
+		entry.timeStamp = tsBuf
 
-		if !check.Passes() {
-			break
+		accBuf := make([]byte, accountingNameWidth)
+		if _, err = io.ReadFull(br, accBuf); err != nil {
+			return nil, err
 		}
 
-		check.GTE(tsBuf)
+		entry.accountingName = accBuf
 
-		_, err = io.ReadFull(br, accBuf)
-		if err != nil {
-			return err
+		userBuf := make([]byte, userNameWidth)
+		if _, err = io.ReadFull(br, userBuf); err != nil {
+			return nil, err
 		}
 
-		check.AccountingName(accBuf)
-
-		_, err = io.ReadFull(br, userBuf)
-		if err != nil {
-			return err
-		}
-
-		check.UserName(userBuf)
+		entry.userName = userBuf
 
 		gpuByte, err := br.ReadByte()
 		if err != nil {
-			return err
+			return nil, err
 		}
 
-		check.GPU(gpuByte)
+		entry.gpu = gpuByte
 
-		_, err = io.ReadFull(br, lenBuf)
-		if err != nil {
-			return err
+		numBuf := make([]byte, lengthEncodeWidth)
+		if _, err = io.ReadFull(br, numBuf); err != nil {
+			return nil, err
 		}
 
-		detailsLength := btoi(lenBuf)
+		entry.index = int64(btoi(numBuf))
 
-		buf := detailsBuf[0:detailsLength]
-
-		_, err = io.ReadFull(br, buf)
-		if err != nil {
-			return err
+		lenBuf := make([]byte, lengthEncodeWidth)
+		if _, err = io.ReadFull(br, lenBuf); err != nil {
+			return nil, err
 		}
 
-		if check.Passes() {
-			d, err := es.DeserializeDetails(buf, fields)
-			if err != nil {
-				return err
-			}
+		entry.length = btoi(lenBuf)
 
-			result.AddHitDetails(d)
-		}
+		fi.entries = append(fi.entries, entry)
 	}
 
-	return f.Close()
+	errc := f.Close()
+
+	return fi, errc
 }
 
 func btoi(b []byte) int {
 	return int(binary.BigEndian.Uint32(b[0:4]))
+}
+
+func (f *flatIndex) Scroll(filter *flatFilter, result *es.Result, fields []string) error {
+	check := filter.PassChecker()
+
+	defer f.close()
+
+	for _, entry := range f.entries {
+		continueOK, passes := entry.Passes(check)
+		if !continueOK {
+			break
+		}
+
+		if !passes {
+			continue
+		}
+
+		data, err := f.getDataEntry(entry)
+		if err != nil {
+			return err
+		}
+
+		d, err := es.DeserializeDetails(data, fields)
+		if err != nil {
+			return err
+		}
+
+		result.AddHitDetails(d)
+	}
+
+	return nil
+}
+
+func (f *flatIndex) close() {
+	if f.fh != nil {
+		return
+	}
+
+	f.fh.Close()
+	f.fh = nil
+}
+
+func (f *flatIndex) getDataEntry(entry *flatIndexEntry) ([]byte, error) {
+	err := f.openDataFile()
+	if err != nil {
+		return nil, err
+	}
+
+	if entry.index != f.lastPos {
+		_, err = f.fh.Seek(entry.index, 0)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	data := make([]byte, entry.length)
+	_, err = io.ReadFull(f.fh, data)
+
+	f.lastPos = entry.index + int64(entry.length)
+
+	return data, err
+}
+
+func (f *flatIndex) openDataFile() error {
+	if f.fh != nil {
+		return nil
+	}
+
+	fh, err := os.Open(f.dataPath)
+	if err != nil {
+		return err
+	}
+
+	f.fh = fh
+	f.lastPos = 0
+
+	return nil
 }

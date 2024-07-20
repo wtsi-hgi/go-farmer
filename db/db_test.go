@@ -121,42 +121,52 @@ func TestDB(t *testing.T) {
 			dir = filepath.Join(dir, bomA)
 			entries, err = os.ReadDir(dir)
 			So(err, ShouldBeNil)
-			So(len(entries), ShouldEqual, 15)
+			So(len(entries), ShouldEqual, 22)
 			So(entries[0].Type().IsRegular(), ShouldBeTrue)
-			So(entries[0].Name(), ShouldEqual, "0")
-			So(entries[14].Type().IsRegular(), ShouldBeTrue)
-			So(entries[14].Name(), ShouldEqual, "9")
-			So(entries[6].Type().IsRegular(), ShouldBeTrue)
-			So(entries[6].Name(), ShouldEqual, "14")
+			So(entries[0].Name(), ShouldEqual, "0.data")
+			So(entries[1].Type().IsRegular(), ShouldBeTrue)
+			So(entries[1].Name(), ShouldEqual, "0.index")
+			So(entries[21].Type().IsRegular(), ShouldBeTrue)
+			So(entries[21].Name(), ShouldEqual, "9.index")
+			So(entries[5].Type().IsRegular(), ShouldBeTrue)
+			So(entries[5].Name(), ShouldEqual, "10.index")
 
-			filePath := filepath.Join(dir, "0")
-			b, err := os.ReadFile(filePath)
+			indexFilePath := filepath.Join(dir, "0.index")
+			bIndex, err := os.ReadFile(indexFilePath)
 			So(err, ShouldBeNil)
 
-			So(len(b), ShouldBeGreaterThanOrEqualTo, fileSize)
-			So(len(b), ShouldBeLessThan, fileSize*2)
+			dataFilePath := filepath.Join(dir, "0.data")
+			bData, err := os.ReadFile(dataFilePath)
+			So(err, ShouldBeNil)
 
-			So(b[0:timeStampWidth], ShouldResemble, []byte{0, 0, 0, 0, 101, 190, 211, 129})
+			So(len(bData), ShouldBeGreaterThanOrEqualTo, fileSize)
+			So(len(bData), ShouldBeLessThan, fileSize*2)
 
-			stamp := timeStampBytesToFormatString(b[0:timeStampWidth])
+			So(bIndex[0:timeStampWidth], ShouldResemble, []byte{0, 0, 0, 0, 101, 190, 211, 129})
+
+			stamp := timeStampBytesToFormatString(bIndex[0:timeStampWidth])
 			So(stamp, ShouldEqual, "2024-02-04T00:00:01Z")
 
 			nextFieldStart := timeStampWidth
-			So(string(b[nextFieldStart:nextFieldStart+accountingNameWidth]), ShouldEqual, "groupA                  ")
+			So(string(bIndex[nextFieldStart:nextFieldStart+accountingNameWidth]), ShouldEqual, "groupA                  ")
 
 			nextFieldStart += accountingNameWidth
-			So(string(b[nextFieldStart:nextFieldStart+userNameWidth]), ShouldEqual, "userA        ")
+			So(string(bIndex[nextFieldStart:nextFieldStart+userNameWidth]), ShouldEqual, "userA        ")
 
 			nextFieldStart += userNameWidth
-			So(b[nextFieldStart:nextFieldStart+1], ShouldEqual, []byte{notInGPUQueue})
+			So(bIndex[nextFieldStart:nextFieldStart+1], ShouldEqual, []byte{notInGPUQueue})
 
 			nextFieldStart++
-			detailsLen := int(binary.BigEndian.Uint32(b[nextFieldStart : nextFieldStart+lengthEncodeWidth]))
+			dataPos := int(binary.BigEndian.Uint32(bIndex[nextFieldStart : nextFieldStart+lengthEncodeWidth]))
+			expectedDataPos := 0
+			So(dataPos, ShouldEqual, expectedDataPos)
+
+			nextFieldStart += lengthEncodeWidth
+			detailsLen := int(binary.BigEndian.Uint32(bIndex[nextFieldStart : nextFieldStart+lengthEncodeWidth]))
 			expectedDetailsLen := 127
 			So(detailsLen, ShouldEqual, expectedDetailsLen)
 
-			nextFieldStart += lengthEncodeWidth
-			detailsBytes := b[nextFieldStart : nextFieldStart+detailsLen]
+			detailsBytes := bData[dataPos:detailsLen]
 			details, err := es.DeserializeDetails(detailsBytes, []string{})
 			So(err, ShouldBeNil)
 
@@ -167,21 +177,33 @@ func TestDB(t *testing.T) {
 			So(details.Timestamp, ShouldEqual, timeStamp.Unix())
 			So(details.ID, ShouldEqual, result.HitSet.Hits[1].ID)
 
-			nextFieldStart += detailsLen
-			stamp = timeStampBytesToFormatString(b[nextFieldStart : nextFieldStart+timeStampWidth])
+			nextFieldStart += lengthEncodeWidth
+			stamp = timeStampBytesToFormatString(bIndex[nextFieldStart : nextFieldStart+timeStampWidth])
 			So(stamp, ShouldEqual, "2024-02-04T00:00:03Z")
 
 			dir = filepath.Join(dbDir, "2024", "02", "05", bomA)
 			entries, err = os.ReadDir(dir)
 			So(err, ShouldBeNil)
-			So(len(entries), ShouldEqual, 15)
+			So(len(entries), ShouldEqual, 22)
 
-			filePath = filepath.Join(dir, "14")
-			b, err = os.ReadFile(filePath)
+			indexFilePath = filepath.Join(dir, "10.index")
+			bIndex, err = os.ReadFile(indexFilePath)
 			So(err, ShouldBeNil)
 
-			nextFieldStart = len(b) - expectedDetailsLen
-			detailsBytes = b[nextFieldStart:]
+			dataFilePath = filepath.Join(dir, "10.data")
+			bData, err = os.ReadFile(dataFilePath)
+			So(err, ShouldBeNil)
+
+			nextFieldStart = len(bIndex) - (2 * lengthEncodeWidth)
+			dataPos = int(binary.BigEndian.Uint32(bIndex[nextFieldStart : nextFieldStart+lengthEncodeWidth]))
+			So(dataPos, ShouldBeGreaterThan, 0)
+
+			nextFieldStart += lengthEncodeWidth
+			detailsLen = int(binary.BigEndian.Uint32(bIndex[nextFieldStart : nextFieldStart+lengthEncodeWidth]))
+			So(detailsLen, ShouldEqual, expectedDetailsLen)
+
+			detailsBytes = bData[dataPos:]
+			So(len(detailsBytes), ShouldEqual, detailsLen)
 			details, err = es.DeserializeDetails(detailsBytes, []string{})
 			So(err, ShouldBeNil)
 			So(details, ShouldResemble, result.HitSet.Hits[expectedNumHits-1].Details)
@@ -310,10 +332,10 @@ func TestDB(t *testing.T) {
 				db.mu.RUnlock()
 
 				febDir := filepath.Join(dbDir, "2024", "02")
-				olderFile := filepath.Join(febDir, "03", bomA, "0")
-				newerFile := filepath.Join(febDir, "08", bomA, "0")
+				olderFile := filepath.Join(febDir, "03", bomA, "0.index")
+				newerFile := filepath.Join(febDir, "08", bomA, "0.index")
 				today := time.Now().Format(dateFormat)
-				newestFile := filepath.Join(dbDir, today, bomA, "0")
+				newestFile := filepath.Join(dbDir, today, bomA, "0.index")
 
 				err = makeFiles(olderFile, newerFile, newestFile)
 				So(err, ShouldBeNil)

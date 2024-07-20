@@ -72,8 +72,8 @@ func TestBackfill(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		bom := "Human Genetics"
-		localPath30 := filepath.Join(dir, "2024", "05", "30", bom, "0")
-		localPath31 := filepath.Join(dir, "2024", "05", "31", bom, "0")
+		localPath30 := filepath.Join(dir, "2024", "05", "30", bom, "0.index")
+		localPath31 := filepath.Join(dir, "2024", "05", "31", bom, "0.index")
 
 		infoOrig30, err := os.Stat(localPath30)
 		So(err, ShouldBeNil)
