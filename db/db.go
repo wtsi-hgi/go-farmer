@@ -27,7 +27,6 @@ package db
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -127,7 +126,6 @@ type DB struct {
 	fileSize             int
 	bufferSize           int
 	bufPool              *benc.BufPool
-	dbs                  map[string]*flatDB
 	dateBOMDirs          map[string][]*flatIndex
 	updateFrequency      time.Duration
 	checkBackfillSuccess bool
@@ -155,7 +153,6 @@ func New(config Config, checkBackfillSuccess bool) (*DB, error) {
 		fileSize:             config.FileSizeOrDefault(),
 		bufferSize:           config.BufferSizeOrDefault(),
 		bufPool:              benc.NewBufPool(benc.WithBufferSize(es.MaxEncodedDetailsLength)),
-		dbs:                  make(map[string]*flatDB),
 		dateBOMDirs:          make(map[string][]*flatIndex),
 		updateFrequency:      config.UpdateFrequencyOrDefault(),
 		checkBackfillSuccess: checkBackfillSuccess,
@@ -288,13 +285,17 @@ func (d *DB) loadLatestFlatIndexes() {
 }
 
 // Store stores the Details in the Hits of the given Result in flat database
-// files in our directory, that can later be retrieved via Scroll(). Call
-// Close() after using this for the last time.
+// files in our directory, that can later be retrieved via Scroll().
 //
 // NB: What you Store() with this DB will not be available to Scroll(). You will
-// need to Close() this DB and make a New() one to Scroll() the stored hits.
+// make a New() one to Scroll() the stored hits.
+//
+// NB: You can only call Store() concurrently if the result supplied to each
+// invocation is for a query of unique days.
 func (d *DB) Store(result *es.Result) error {
 	prevDay := ""
+
+	flatDBs := make(map[string]*flatDB)
 
 	for _, hit := range result.HitSet.Hits {
 		group, user, isGPU, encodedDetails, err := d.getFixedWidthFields(hit)
@@ -303,14 +304,16 @@ func (d *DB) Store(result *es.Result) error {
 		}
 
 		day := timestampToDay(hit.Details.Timestamp)
-		if day != prevDay {
-			err = d.closeAndClearStored()
+		if day != prevDay && prevDay != "" {
+			err = closeFlatDBs(flatDBs)
 			if err != nil {
 				return err
 			}
 		}
 
-		fdb, err := d.createOrGetFlatDB(day, hit.Details.BOM)
+		dayBom := filepath.Join(day, hit.Details.BOM)
+
+		fdb, err := d.getOrCreateFlatDB(flatDBs, dayBom)
 		if err != nil {
 			return err
 		}
@@ -330,7 +333,7 @@ func (d *DB) Store(result *es.Result) error {
 		prevDay = day
 	}
 
-	return nil
+	return closeFlatDBs(flatDBs)
 }
 
 func (d *DB) getFixedWidthFields(hit es.Hit) ([]byte, []byte, byte, []byte, error) {
@@ -372,37 +375,29 @@ func timestampToDay(timeStamp int64) string {
 	return time.Unix(timeStamp, 0).UTC().Format(dateFormat)
 }
 
-func (d *DB) closeAndClearStored() error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	for _, fdb := range d.dbs {
-		if err := fdb.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+func closeFlatDBs(flatDBs map[string]*flatDB) error {
+	for key, fdb := range flatDBs {
+		if err := fdb.Close(); err != nil {
 			return err
 		}
-	}
 
-	d.dbs = make(map[string]*flatDB)
+		delete(flatDBs, key)
+	}
 
 	return nil
 }
 
-func (d *DB) createOrGetFlatDB(day, bom string) (*flatDB, error) {
-	key := filepath.Join(day, bom)
+func (d *DB) getOrCreateFlatDB(flatDBs map[string]*flatDB, dayBom string) (*flatDB, error) {
+	var err error
 
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	fdb, ok := d.dbs[key]
+	fdb, ok := flatDBs[dayBom]
 	if !ok {
-		var err error
-
-		fdb, err = newFlatDB(filepath.Join(d.dir, key), d.fileSize, d.bufferSize)
+		fdb, err = newFlatDB(filepath.Join(d.dir, dayBom), d.fileSize, d.bufferSize)
 		if err != nil {
 			return nil, err
 		}
 
-		d.dbs[key] = fdb
+		flatDBs[dayBom] = fdb
 	}
 
 	return fdb, nil
@@ -509,15 +504,8 @@ func (d *DB) Usernames(query *es.Query) ([]string, error) {
 	return usernames, nil
 }
 
-// Close closes any open filehandles. You must call this after your last use of
-// Store(), or your database files will be corrupt.
+// Close stops any ongoing monitoring cleanly.
 func (d *DB) Close() error {
-	for _, fdb := range d.dbs {
-		if err := fdb.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
-			return err
-		}
-	}
-
 	if d.stopMonitoring != nil {
 		d.stopMonitoring <- true
 	}
