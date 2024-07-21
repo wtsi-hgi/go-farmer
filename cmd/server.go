@@ -26,6 +26,7 @@
 package cmd
 
 import (
+	"log/slog"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -37,6 +38,8 @@ import (
 )
 
 const gracefulTimeout = 10 * time.Second
+
+var serverDebug bool
 
 var serverCmd = &cobra.Command{
 	Use:   "server",
@@ -95,10 +98,17 @@ a fixed fake answer since we handle scrolls during search.)
 
 		server := server.New(cq, config.Elastic.Index, config.ElasticURL())
 
+		if serverDebug {
+			slog.SetLogLoggerLevel(slog.LevelDebug)
+		}
+
 		graceful.Run(config.FarmerHostPort(), gracefulTimeout, server)
 	},
 }
 
 func init() {
 	RootCmd.AddCommand(serverCmd)
+
+	serverCmd.Flags().BoolVarP(&serverDebug, "debug", "d", false,
+		"output additional debug info")
 }

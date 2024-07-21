@@ -26,6 +26,7 @@
 package cache
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"time"
@@ -38,6 +39,7 @@ import (
 const (
 	cacheKeyPrefixResults = "r."
 	cacheKeyPrefixStrings = "s."
+	hoursInDay            = 24
 )
 
 // Searcher types have a Search function for querying something like elastic
@@ -113,9 +115,69 @@ func (c *CachedQuerier) searchQuerier(query *es.Query) ([]byte, error) {
 		return nil, err
 	}
 
-	slog.Debug("search query", "took", time.Since(t))
+	items := 0
+	if result.Aggregations != nil {
+		items = len(result.Aggregations.Stats.Buckets)
+	}
+
+	logQuery(t, items, query, "search")
 
 	return resultToJSON(result, query)
+}
+
+func logQuery(start time.Time, items int, query *es.Query, kind string) {
+	if !slog.Default().Enabled(context.Background(), slog.LevelDebug) {
+		return
+	}
+
+	attrs := []slog.Attr{
+		slog.Any("took", time.Since(start)),
+		slog.Int("items", items),
+	}
+
+	daysAttr, err := queryToDaysAttr(query)
+	if err == nil {
+		attrs = append(attrs, daysAttr)
+	}
+
+	attrs = append(attrs, queryToFilterAttrs(query)...)
+
+	slog.LogAttrs(context.Background(), slog.LevelDebug, kind+" query", attrs...)
+}
+
+func queryToDaysAttr(query *es.Query) (slog.Attr, error) {
+	lt, lte, gte, err := query.DateRange()
+	if err != nil {
+		return slog.Attr{}, err
+	}
+
+	end := lt
+	if lt.IsZero() {
+		end = lte
+	}
+
+	return slog.Int("days", int(end.Sub(gte).Hours()/hoursInDay)), nil
+}
+
+func queryToFilterAttrs(query *es.Query) []slog.Attr {
+	var attrs []slog.Attr //nolint:prealloc
+
+	filters := query.Filters()
+	for _, filter := range []string{"BOM", "ACCOUNTING_NAME", "USER_NAME"} {
+		val, set := filters[filter]
+		if set {
+			attrs = append(attrs, slog.String(filter, val))
+			delete(filters, filter)
+		}
+	}
+
+	delete(filters, "META_CLUSTER_NAME")
+
+	for k, v := range filters {
+		attrs = append(attrs, slog.String(k, v))
+	}
+
+	return attrs
 }
 
 func resultToJSON(result *es.Result, query *es.Query) ([]byte, error) {
@@ -144,7 +206,7 @@ func (c *CachedQuerier) scrollQuerier(query *es.Query) ([]byte, error) {
 		return nil, err
 	}
 
-	slog.Debug("scroll query", "took", time.Since(t))
+	logQuery(t, len(result.HitSet.Hits), query, "scroll")
 
 	return resultToJSON(result, query)
 }
@@ -163,7 +225,7 @@ func (c *CachedQuerier) usernameQuerier(query *es.Query) ([]byte, error) {
 		return nil, err
 	}
 
-	slog.Debug("usernames query", "took", time.Since(t))
+	logQuery(t, len(usernames), query, "usernames")
 
 	return stringsToJSON(usernames)
 }
