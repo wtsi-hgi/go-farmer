@@ -27,6 +27,9 @@ package cmd
 
 import (
 	"log/slog"
+	"os"
+	"runtime"
+	"runtime/pprof"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -39,7 +42,10 @@ import (
 
 const gracefulTimeout = 10 * time.Second
 
-var serverDebug bool
+var (
+	serverDebug bool
+	serverPprof string
+)
 
 var serverCmd = &cobra.Command{
 	Use:   "server",
@@ -102,6 +108,30 @@ a fixed fake answer since we handle scrolls during search.)
 			slog.SetLogLoggerLevel(slog.LevelDebug)
 		}
 
+		if serverPprof != "" {
+			fCPU, err := os.Create(serverPprof + ".cpu")
+			if err != nil {
+				die("failed to create pprof output file: %s", err)
+			}
+
+			fMem, err := os.Create(serverPprof + ".mem")
+			if err != nil {
+				die("failed to create pprof output file: %s", err)
+			}
+
+			defer fCPU.Close()
+			defer fMem.Close()
+
+			runtime.GC()
+			pprof.StartCPUProfile(fCPU) //nolint:errcheck
+
+			defer func() {
+				pprof.StopCPUProfile()
+				runtime.GC()
+				pprof.WriteHeapProfile(fMem) //nolint:errcheck
+			}()
+		}
+
 		graceful.Run(config.FarmerHostPort(), gracefulTimeout, server)
 	},
 }
@@ -111,4 +141,6 @@ func init() {
 
 	serverCmd.Flags().BoolVarP(&serverDebug, "debug", "d", false,
 		"output additional debug info")
+	serverCmd.Flags().StringVarP(&serverPprof, "pprof", "p", "",
+		"output profiling data to files with the given prefix path")
 }
