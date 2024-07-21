@@ -62,7 +62,7 @@ func TestDetails(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(len(detailBytes), ShouldEqual, 127)
 
-		recovered, err := DeserializeDetails(detailBytes, []string{})
+		recovered, err := DeserializeDetails(detailBytes, 0)
 		So(err, ShouldBeNil)
 		So(recovered, ShouldResemble, details)
 
@@ -91,75 +91,75 @@ func TestDetails(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(len(detailBytes), ShouldEqual, 124)
 
-		recovered, err = DeserializeDetails(detailBytes, []string{})
+		recovered, err = DeserializeDetails(detailBytes, 0)
 		So(err, ShouldBeNil)
 		So(recovered, ShouldResemble, details)
 
-		recovered, err = DeserializeDetails(detailBytes, []string{"ACCOUNTING_NAME"})
+		recovered, err = DeserializeDetails(detailBytes, FieldAccountingName)
 		So(err, ShouldBeNil)
 		So(recovered, ShouldResemble, &Details{ID: expectedID, AccountingName: "aname"})
 
-		recovered, err = DeserializeDetails(detailBytes, []string{"AVAIL_CPU_TIME_SEC"})
+		recovered, err = DeserializeDetails(detailBytes, FieldAvailCPUTimeSec)
 		So(err, ShouldBeNil)
 		So(recovered, ShouldResemble, &Details{ID: expectedID, AvailCPUTimeSec: 0})
 
-		recovered, err = DeserializeDetails(detailBytes, []string{"BOM"})
+		recovered, err = DeserializeDetails(detailBytes, FieldBOM)
 		So(err, ShouldBeNil)
 		So(recovered, ShouldResemble, &Details{ID: expectedID, BOM: "bname"})
 
-		recovered, err = DeserializeDetails(detailBytes, []string{"Command"})
+		recovered, err = DeserializeDetails(detailBytes, FieldCommand)
 		So(err, ShouldBeNil)
 		So(recovered, ShouldResemble, &Details{ID: expectedID, Command: "cmd"})
 
-		recovered, err = DeserializeDetails(detailBytes, []string{"JOB_NAME"})
+		recovered, err = DeserializeDetails(detailBytes, FieldJobName)
 		So(err, ShouldBeNil)
 		So(recovered, ShouldResemble, &Details{ID: expectedID, JobName: ""})
 
-		recovered, err = DeserializeDetails(detailBytes, []string{"Job"})
+		recovered, err = DeserializeDetails(detailBytes, FieldJob)
 		So(err, ShouldBeNil)
 		So(recovered, ShouldResemble, &Details{ID: expectedID, Job: "job"})
 
-		recovered, err = DeserializeDetails(detailBytes, []string{"MEM_REQUESTED_MB"})
+		recovered, err = DeserializeDetails(detailBytes, FieldMemRequestedMB)
 		So(err, ShouldBeNil)
 		So(recovered, ShouldResemble, &Details{ID: expectedID, MemRequestedMB: 1})
 
-		recovered, err = DeserializeDetails(detailBytes, []string{"MEM_REQUESTED_MB_SEC"})
+		recovered, err = DeserializeDetails(detailBytes, FieldMemRequestedMBSec)
 		So(err, ShouldBeNil)
 		So(recovered, ShouldResemble, &Details{ID: expectedID, MemRequestedMBSec: 2})
 
-		recovered, err = DeserializeDetails(detailBytes, []string{"NUM_EXEC_PROCS"})
+		recovered, err = DeserializeDetails(detailBytes, FieldNumExecProcs)
 		So(err, ShouldBeNil)
 		So(recovered, ShouldResemble, &Details{ID: expectedID, NumExecProcs: 3})
 
-		recovered, err = DeserializeDetails(detailBytes, []string{"PENDING_TIME_SEC"})
+		recovered, err = DeserializeDetails(detailBytes, FieldPendingTimeSec)
 		So(err, ShouldBeNil)
 		So(recovered, ShouldResemble, &Details{ID: expectedID, PendingTimeSec: 4})
 
-		recovered, err = DeserializeDetails(detailBytes, []string{"QUEUE_NAME"})
+		recovered, err = DeserializeDetails(detailBytes, FieldQueueName)
 		So(err, ShouldBeNil)
 		So(recovered, ShouldResemble, &Details{ID: expectedID, QueueName: "qname"})
 
-		recovered, err = DeserializeDetails(detailBytes, []string{"RUN_TIME_SEC"})
+		recovered, err = DeserializeDetails(detailBytes, FieldRunTimeSec)
 		So(err, ShouldBeNil)
 		So(recovered, ShouldResemble, &Details{ID: expectedID, RunTimeSec: 5})
 
-		recovered, err = DeserializeDetails(detailBytes, []string{"timestamp"})
+		recovered, err = DeserializeDetails(detailBytes, FieldTimestamp)
 		So(err, ShouldBeNil)
 		So(recovered, ShouldResemble, &Details{ID: expectedID, Timestamp: 6})
 
-		recovered, err = DeserializeDetails(detailBytes, []string{"USER_NAME"})
+		recovered, err = DeserializeDetails(detailBytes, FieldUserName)
 		So(err, ShouldBeNil)
 		So(recovered, ShouldResemble, &Details{ID: expectedID, UserName: "uname"})
 
-		recovered, err = DeserializeDetails(detailBytes, []string{"WASTED_CPU_SECONDS"})
+		recovered, err = DeserializeDetails(detailBytes, FieldWastedCPUSeconds)
 		So(err, ShouldBeNil)
 		So(recovered, ShouldResemble, &Details{ID: expectedID, WastedCPUSeconds: 7.1})
 
-		recovered, err = DeserializeDetails(detailBytes, []string{"WASTED_MB_SECONDS"})
+		recovered, err = DeserializeDetails(detailBytes, FieldWastedMBSeconds)
 		So(err, ShouldBeNil)
 		So(recovered, ShouldResemble, &Details{ID: expectedID, WastedMBSeconds: 7.2})
 
-		recovered, err = DeserializeDetails(detailBytes, []string{"WASTED_MB_SECONDS", "BOM"})
+		recovered, err = DeserializeDetails(detailBytes, FieldWastedMBSeconds|FieldBOM)
 		So(err, ShouldBeNil)
 		So(recovered, ShouldResemble, &Details{ID: expectedID, BOM: "bname", WastedMBSeconds: 7.2})
 
@@ -187,7 +187,7 @@ func TestDetails(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(len(detailBytes), ShouldEqual, 7714)
 
-		recovered, err = DeserializeDetails(detailBytes, []string{})
+		recovered, err = DeserializeDetails(detailBytes, 0)
 		So(err, ShouldBeNil)
 		So(recovered.ID, ShouldEqual, details.ID)
 		So(recovered.AccountingName, ShouldEqual, details.AccountingName)

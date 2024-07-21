@@ -49,6 +49,7 @@ type flatFilter struct {
 	checkUser       bool
 	checkGPU        bool
 	checkLTE        bool
+	desiredFields   es.Fields
 }
 
 func newFlatFilter(query *es.Query) (*flatFilter, error) {
@@ -58,10 +59,11 @@ func newFlatFilter(query *es.Query) (*flatFilter, error) {
 	}
 
 	filter := &flatFilter{
-		LT:       lt,
-		LTE:      lte,
-		GTE:      gte,
-		checkLTE: !lte.IsZero(),
+		LT:            lt,
+		LTE:           lte,
+		GTE:           gte,
+		checkLTE:      !lte.IsZero(),
+		desiredFields: query.DesiredFields(),
 	}
 
 	filter.LTKey, filter.LTEKey, filter.GTEKey = i64tob(lt.Unix()), i64tob(lte.Unix()), i64tob(gte.Unix())

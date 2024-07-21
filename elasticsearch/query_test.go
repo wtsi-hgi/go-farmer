@@ -220,4 +220,72 @@ func TestQuery(t *testing.T) {
 		filters = query.Filters()
 		So(len(filters), ShouldEqual, 0)
 	})
+
+	Convey("You can get the desired fields from a Query", t, func() {
+		tests := []struct {
+			name     string
+			expected Fields
+		}{
+			{name: "ACCOUNTING_NAME", expected: FieldAccountingName},
+			{name: "AVAIL_CPU_TIME_SEC", expected: FieldAvailCPUTimeSec},
+			{name: "BOM", expected: FieldBOM},
+			{name: "Command", expected: FieldCommand},
+			{name: "JOB_NAME", expected: FieldJobName},
+			{name: "Job", expected: FieldJob},
+			{name: "MEM_REQUESTED_MB", expected: FieldMemRequestedMB},
+			{name: "MEM_REQUESTED_MB_SEC", expected: FieldMemRequestedMBSec},
+			{name: "NUM_EXEC_PROCS", expected: FieldNumExecProcs},
+			{name: "PENDING_TIME_SEC", expected: FieldPendingTimeSec},
+			{name: "QUEUE_NAME", expected: FieldQueueName},
+			{name: "RUN_TIME_SEC", expected: FieldRunTimeSec},
+			{name: "timestamp", expected: FieldTimestamp},
+			{name: "USER_NAME", expected: FieldUserName},
+			{name: "WASTED_CPU_SECONDS", expected: FieldWastedCPUSeconds},
+			{name: "WASTED_MB_SECONDS", expected: FieldWastedMBSeconds},
+		}
+
+		for _, test := range tests {
+			sourceQuery := `{"_source":["` + test.name + `"]}`
+			query, err := newQueryFromReader(strings.NewReader(sourceQuery))
+			So(err, ShouldBeNil)
+			So(len(query.Source), ShouldEqual, 1)
+			So(query.Source[0], ShouldEqual, test.name)
+
+			actual := query.DesiredFields()
+			So(WantsField(actual, test.expected), ShouldBeTrue)
+
+			for _, field := range []Fields{FieldAccountingName, FieldAvailCPUTimeSec,
+				FieldBOM, FieldCommand, FieldJobName, FieldJob, FieldMemRequestedMB,
+				FieldMemRequestedMBSec, FieldNumExecProcs, FieldPendingTimeSec,
+				FieldQueueName, FieldRunTimeSec, FieldTimestamp, FieldUserName,
+				FieldWastedCPUSeconds, FieldWastedMBSeconds} {
+				if field == test.expected {
+					continue
+				}
+
+				So(WantsField(actual, field), ShouldBeFalse)
+			}
+		}
+
+		sourceQuery := `{"_source":["ACCOUNTING_NAME", "BOM"]}`
+		query, err := newQueryFromReader(strings.NewReader(sourceQuery))
+		So(err, ShouldBeNil)
+		So(len(query.Source), ShouldEqual, 2)
+		So(query.Source[0], ShouldEqual, "ACCOUNTING_NAME")
+		So(query.Source[1], ShouldEqual, "BOM")
+
+		actual := query.DesiredFields()
+		So(WantsField(actual, FieldAccountingName), ShouldBeTrue)
+		So(WantsField(actual, FieldAvailCPUTimeSec), ShouldBeFalse)
+		So(WantsField(actual, FieldBOM), ShouldBeTrue)
+
+		sourceQuery = `{"_source":[]}`
+		query, err = newQueryFromReader(strings.NewReader(sourceQuery))
+		So(err, ShouldBeNil)
+		So(len(query.Source), ShouldEqual, 0)
+
+		actual = query.DesiredFields()
+		So(WantsField(actual, FieldAccountingName), ShouldBeTrue)
+		So(WantsField(actual, FieldWastedMBSeconds), ShouldBeTrue)
+	})
 }

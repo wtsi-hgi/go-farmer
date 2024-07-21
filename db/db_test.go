@@ -167,7 +167,7 @@ func TestDB(t *testing.T) {
 			So(detailsLen, ShouldEqual, expectedDetailsLen)
 
 			detailsBytes := bData[dataPos:detailsLen]
-			details, err := es.DeserializeDetails(detailsBytes, []string{})
+			details, err := es.DeserializeDetails(detailsBytes, 0)
 			So(err, ShouldBeNil)
 
 			timeStamp, err := time.Parse(time.RFC3339, "2024-02-04T00:00:01Z")
@@ -204,7 +204,7 @@ func TestDB(t *testing.T) {
 
 			detailsBytes = bData[dataPos:]
 			So(len(detailsBytes), ShouldEqual, detailsLen)
-			details, err = es.DeserializeDetails(detailsBytes, []string{})
+			details, err = es.DeserializeDetails(detailsBytes, 0)
 			So(err, ShouldBeNil)
 			So(details, ShouldResemble, result.HitSet.Hits[expectedNumHits-1].Details)
 

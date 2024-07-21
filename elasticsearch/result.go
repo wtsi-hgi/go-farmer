@@ -146,17 +146,29 @@ type Hit struct {
 
 // Details holds the document information of a Hit.
 type Details struct {
-	ID              string `json:"_id"`
-	AccountingName  string `json:"ACCOUNTING_NAME"`
-	AvailCPUTimeSec int64  `json:"AVAIL_CPU_TIME_SEC"`
+	ID                string  `json:"_id"`
+	AccountingName    string  `json:"ACCOUNTING_NAME"`
+	AvailCPUTimeSec   int64   `json:"AVAIL_CPU_TIME_SEC"`
+	BOM               string  `json:"BOM"`
+	Command           string  `json:"Command"`
+	JobName           string  `json:"JOB_NAME"`
+	Job               string  `json:"Job"`
+	MemRequestedMB    int64   `json:"MEM_REQUESTED_MB"`
+	MemRequestedMBSec int64   `json:"MEM_REQUESTED_MB_SEC"`
+	NumExecProcs      int64   `json:"NUM_EXEC_PROCS"`
+	PendingTimeSec    int64   `json:"PENDING_TIME_SEC"`
+	QueueName         string  `json:"QUEUE_NAME"`
+	RunTimeSec        int64   `json:"RUN_TIME_SEC"`
+	Timestamp         int64   `json:"timestamp"`
+	UserName          string  `json:"USER_NAME"`
+	WastedCPUSeconds  float64 `json:"WASTED_CPU_SECONDS"`
+	WastedMBSeconds   float64 `json:"WASTED_MB_SECONDS"`
 	// AVG_MEM_EFFICIENCY_PERCENT     float64
 	// AVRG_MEM_USAGE_MB              float64
 	// AVRG_MEM_USAGE_MB_SEC_COOKED   float64
 	// AVRG_MEM_USAGE_MB_SEC_RAW      float64
-	BOM string `json:"BOM"`
 	// CLUSTER_NAME                   string
 	// COOKED_CPU_TIME_SEC            float64
-	Command string `json:"Command"`
 	// END_TIME                       int
 	// EXEC_HOSTNAME                  []string
 	// Exit_Info                      int
@@ -164,33 +176,21 @@ type Details struct {
 	// JOB_ID          int
 	// JOB_ARRAY_INDEX int
 	// JOB_EXIT_STATUS                int
-	JobName string `json:"JOB_NAME"`
-	Job     string `json:"Job"`
 	// Job_Efficiency_Percent         float64
 	// Job_Efficiency_Raw_Percent     float64
 	// MAX_MEM_EFFICIENCY_PERCENT     float64
 	// MAX_MEM_USAGE_MB               float64
 	// MAX_MEM_USAGE_MB_SEC_COOKED    float64
 	// MAX_MEM_USAGE_MB_SEC_RAW       float64
-	MemRequestedMB    int64 `json:"MEM_REQUESTED_MB"`
-	MemRequestedMBSec int64 `json:"MEM_REQUESTED_MB_SEC"`
-	NumExecProcs      int64 `json:"NUM_EXEC_PROCS"`
 	// NumberOfHosts                  int
 	// NumberOfUniqueHosts            int
-	PendingTimeSec int64 `json:"PENDING_TIME_SEC"`
 	// PROJECT_NAME                   string
-	QueueName string `json:"QUEUE_NAME"`
 	// RAW_AVG_MEM_EFFICIENCY_PERCENT float64
 	// RAW_CPU_TIME_SEC               float64
 	// RAW_MAX_MEM_EFFICIENCY_PERCENT float64
 	// RAW_WASTED_CPU_SECONDS         float64
 	// RAW_WASTED_MB_SECONDS          float64
-	RunTimeSec int64 `json:"RUN_TIME_SEC"`
 	// SUBMIT_TIME  int
-	Timestamp        int64   `json:"timestamp"`
-	UserName         string  `json:"USER_NAME"`
-	WastedCPUSeconds float64 `json:"WASTED_CPU_SECONDS"`
-	WastedMBSeconds  float64 `json:"WASTED_MB_SECONDS"`
 }
 
 // Serialize converts a Details to a byte slice representation suitable for
@@ -321,33 +321,22 @@ func headTailString(s string) string {
 }
 
 // DeserializeDetails takes the output of Details.Serialize and converts it
-// back in to a Details. If desiredFields is not an empty slice, only the given
-// fields (expressed as their JSON names) will be unmarshalled.
-func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error) { //nolint:funlen,gocognit,gocyclo,cyclop,maintidx,lll
+// back in to a Details. Provide a non-zero Fields (from Query.DesiredFields())
+// to skip the unmarshalling of undesired fields, for a speed boost.
+func DeserializeDetails(encoded []byte, desired Fields) (*Details, error) { //nolint:funlen,gocognit,gocyclo,cyclop
 	details := &Details{}
 
 	var (
-		n       int //nolint:varnamelen
-		err     error
-		doField map[string]bool
+		n   int //nolint:varnamelen
+		err error
 	)
-
-	doAllFields := len(desiredFields) == 0
-
-	if !doAllFields {
-		doField = make(map[string]bool, len(desiredFields))
-
-		for _, field := range desiredFields {
-			doField[field] = true
-		}
-	}
 
 	n, details.ID, err = bstd.UnmarshalString(0, encoded)
 	if err != nil {
 		return nil, err
 	}
 
-	if doAllFields || doField["ACCOUNTING_NAME"] {
+	if WantsField(desired, FieldAccountingName) {
 		n, details.AccountingName, err = bstd.UnmarshalString(n, encoded)
 	} else {
 		n, err = bstd.SkipString(n, encoded)
@@ -357,7 +346,7 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 		return nil, err
 	}
 
-	if doAllFields || doField["AVAIL_CPU_TIME_SEC"] {
+	if WantsField(desired, FieldAvailCPUTimeSec) {
 		n, details.AvailCPUTimeSec, err = bstd.UnmarshalInt64(n, encoded)
 	} else {
 		n, err = bstd.SkipInt64(n, encoded)
@@ -367,7 +356,7 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 		return nil, err
 	}
 
-	if doAllFields || doField["BOM"] {
+	if WantsField(desired, FieldBOM) {
 		n, details.BOM, err = bstd.UnmarshalString(n, encoded)
 	} else {
 		n, err = bstd.SkipString(n, encoded)
@@ -377,7 +366,7 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 		return nil, err
 	}
 
-	if doAllFields || doField["Command"] {
+	if WantsField(desired, FieldCommand) {
 		n, details.Command, err = bstd.UnmarshalString(n, encoded)
 	} else {
 		n, err = bstd.SkipString(n, encoded)
@@ -387,7 +376,7 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 		return nil, err
 	}
 
-	if doAllFields || doField["JOB_NAME"] {
+	if WantsField(desired, FieldJobName) {
 		n, details.JobName, err = bstd.UnmarshalString(n, encoded)
 	} else {
 		n, err = bstd.SkipString(n, encoded)
@@ -397,7 +386,7 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 		return nil, err
 	}
 
-	if doAllFields || doField["Job"] {
+	if WantsField(desired, FieldJob) {
 		n, details.Job, err = bstd.UnmarshalString(n, encoded)
 	} else {
 		n, err = bstd.SkipString(n, encoded)
@@ -407,7 +396,7 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 		return nil, err
 	}
 
-	if doAllFields || doField["MEM_REQUESTED_MB"] {
+	if WantsField(desired, FieldMemRequestedMB) {
 		n, details.MemRequestedMB, err = bstd.UnmarshalInt64(n, encoded)
 	} else {
 		n, err = bstd.SkipInt64(n, encoded)
@@ -417,7 +406,7 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 		return nil, err
 	}
 
-	if doAllFields || doField["MEM_REQUESTED_MB_SEC"] {
+	if WantsField(desired, FieldMemRequestedMBSec) {
 		n, details.MemRequestedMBSec, err = bstd.UnmarshalInt64(n, encoded)
 	} else {
 		n, err = bstd.SkipInt64(n, encoded)
@@ -427,7 +416,7 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 		return nil, err
 	}
 
-	if doAllFields || doField["NUM_EXEC_PROCS"] {
+	if WantsField(desired, FieldNumExecProcs) {
 		n, details.NumExecProcs, err = bstd.UnmarshalInt64(n, encoded)
 	} else {
 		n, err = bstd.SkipInt64(n, encoded)
@@ -437,7 +426,7 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 		return nil, err
 	}
 
-	if doAllFields || doField["PENDING_TIME_SEC"] {
+	if WantsField(desired, FieldPendingTimeSec) {
 		n, details.PendingTimeSec, err = bstd.UnmarshalInt64(n, encoded)
 	} else {
 		n, err = bstd.SkipInt64(n, encoded)
@@ -447,7 +436,7 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 		return nil, err
 	}
 
-	if doAllFields || doField["QUEUE_NAME"] {
+	if WantsField(desired, FieldQueueName) {
 		n, details.QueueName, err = bstd.UnmarshalString(n, encoded)
 	} else {
 		n, err = bstd.SkipString(n, encoded)
@@ -457,7 +446,7 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 		return nil, err
 	}
 
-	if doAllFields || doField["RUN_TIME_SEC"] {
+	if WantsField(desired, FieldRunTimeSec) {
 		n, details.RunTimeSec, err = bstd.UnmarshalInt64(n, encoded)
 	} else {
 		n, err = bstd.SkipInt64(n, encoded)
@@ -467,7 +456,7 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 		return nil, err
 	}
 
-	if doAllFields || doField["timestamp"] {
+	if WantsField(desired, FieldTimestamp) {
 		n, details.Timestamp, err = bstd.UnmarshalInt64(n, encoded)
 	} else {
 		n, err = bstd.SkipInt64(n, encoded)
@@ -477,7 +466,7 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 		return nil, err
 	}
 
-	if doAllFields || doField["USER_NAME"] {
+	if WantsField(desired, FieldUserName) {
 		n, details.UserName, err = bstd.UnmarshalString(n, encoded)
 	} else {
 		n, err = bstd.SkipString(n, encoded)
@@ -487,7 +476,7 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 		return nil, err
 	}
 
-	if doAllFields || doField["WASTED_CPU_SECONDS"] {
+	if WantsField(desired, FieldWastedCPUSeconds) {
 		n, details.WastedCPUSeconds, err = bstd.UnmarshalFloat64(n, encoded)
 	} else {
 		n, err = bstd.SkipFloat64(n, encoded)
@@ -497,7 +486,7 @@ func DeserializeDetails(encoded []byte, desiredFields []string) (*Details, error
 		return nil, err
 	}
 
-	if doAllFields || doField["WASTED_MB_SECONDS"] {
+	if WantsField(desired, FieldWastedMBSeconds) {
 		n, details.WastedMBSeconds, err = bstd.UnmarshalFloat64(n, encoded)
 	} else {
 		n, err = bstd.SkipFloat64(n, encoded)

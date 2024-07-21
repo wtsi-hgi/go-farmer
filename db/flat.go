@@ -280,7 +280,7 @@ func btoi(b []byte) int {
 	return int(binary.BigEndian.Uint32(b[0:4]))
 }
 
-func (f *flatIndex) Scroll(filter *flatFilter, result *es.Result, fields []string) error {
+func (f *flatIndex) Scroll(filter *flatFilter, result *es.Result) error {
 	entries := f.getEntries(filter)
 	check := filter.PassChecker()
 
@@ -301,7 +301,7 @@ func (f *flatIndex) Scroll(filter *flatFilter, result *es.Result, fields []strin
 			return err
 		}
 
-		d, err := es.DeserializeDetails(data, fields)
+		d, err := es.DeserializeDetails(data, filter.desiredFields)
 		if err != nil {
 			return err
 		}

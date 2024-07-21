@@ -57,18 +57,6 @@ type Query struct {
 	ScrollParamSet bool         `json:"_scroll,omitempty"`
 }
 
-// DesiredFields returns a map with keys corresponding to Source values, and
-// values of true.
-func (q *Query) DesiredFields() map[string]bool {
-	df := make(map[string]bool, len(q.Source))
-
-	for _, field := range q.Source {
-		df[field] = true
-	}
-
-	return df
-}
-
 // Aggs is used to specify an aggregation query.
 type Aggs struct {
 	Stats interface{} `json:"stats"`
@@ -296,4 +284,87 @@ func addKeyValsToFilters(val map[string]MapStringStringOrMap, key string, filter
 
 		filters[key] = valStr
 	}
+}
+
+type Fields uint16
+
+const (
+	FieldAccountingName Fields = 1 << iota
+	FieldAvailCPUTimeSec
+	FieldBOM
+	FieldCommand
+	FieldJobName
+	FieldJob
+	FieldMemRequestedMB
+	FieldMemRequestedMBSec
+	FieldNumExecProcs
+	FieldPendingTimeSec
+	FieldQueueName
+	FieldRunTimeSec
+	FieldTimestamp
+	FieldUserName
+	FieldWastedCPUSeconds
+	FieldWastedMBSeconds
+)
+
+// DesiredFields returns a Fields bitmask value with all our Source values set.
+// Call eg. WantsField(value, FieldAccountingName) to see if the returned value
+// and thus this Query had a Source entry "ACCOUNTING_NAME".
+//
+// If no Source values are set, this returns a 0 value which will be treated by
+// WantsField() as wanting all fields.
+func (q *Query) DesiredFields() Fields { //nolint:funlen,gocyclo,cyclop
+	var f Fields
+
+	for _, field := range q.Source {
+		switch field {
+		case "ACCOUNTING_NAME":
+			f |= FieldAccountingName
+		case "AVAIL_CPU_TIME_SEC":
+			f |= FieldAvailCPUTimeSec
+		case "BOM":
+			f |= FieldBOM
+		case "Command":
+			f |= FieldCommand
+		case "JOB_NAME":
+			f |= FieldJobName
+		case "Job":
+			f |= FieldJob
+		case "MEM_REQUESTED_MB":
+			f |= FieldMemRequestedMB
+		case "MEM_REQUESTED_MB_SEC":
+			f |= FieldMemRequestedMBSec
+		case "NUM_EXEC_PROCS":
+			f |= FieldNumExecProcs
+		case "PENDING_TIME_SEC":
+			f |= FieldPendingTimeSec
+		case "QUEUE_NAME":
+			f |= FieldQueueName
+		case "RUN_TIME_SEC":
+			f |= FieldRunTimeSec
+		case "timestamp":
+			f |= FieldTimestamp
+		case "USER_NAME":
+			f |= FieldUserName
+		case "WASTED_CPU_SECONDS":
+			f |= FieldWastedCPUSeconds
+		case "WASTED_MB_SECONDS":
+			f |= FieldWastedMBSeconds
+		}
+	}
+
+	return f
+}
+
+// WantsField takes the output of Query.DesiredFields() and sees if the given
+// field from amongst our Fields* flags is one of the desired fields.
+//
+// If desired is 0 (the Query had no Source items set), this always returns
+// true.
+func WantsField(desired, flag Fields) bool {
+	if desired == 0 {
+		return true
+	}
+
+	return desired&flag != 0
 }

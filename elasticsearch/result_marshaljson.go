@@ -16,13 +16,13 @@ import (
 // MarshalFields converts to JSON, but the JSON will only include the given
 // fields of the hit details, even if they're zero value. If the desired map is
 // empty, all fields are included.
-func (v *Result) MarshalFields(desired map[string]bool) ([]byte, error) {
+func (v *Result) MarshalFields(desired Fields) ([]byte, error) {
 	w := jwriter.Writer{}
 	marshalFieldsResult(&w, v, desired)
 	return w.Buffer.BuildBytes(), w.Error
 }
 
-func marshalFieldsResult(out *jwriter.Writer, in *Result, desired map[string]bool) {
+func marshalFieldsResult(out *jwriter.Writer, in *Result, desired Fields) {
 	out.RawByte('{')
 	first := true
 	_ = first
@@ -67,7 +67,7 @@ func marshalFieldsResult(out *jwriter.Writer, in *Result, desired map[string]boo
 // MarshalFields converts to JSON, but the JSON will only include the given
 // fields of the hit details, even if they're zero value. If the desired map is
 // empty, all fields are included.
-func (v *HitSet) MarshalFields(w *jwriter.Writer, desired map[string]bool) {
+func (v *HitSet) MarshalFields(w *jwriter.Writer, desired Fields) {
 	w.RawByte('{')
 	first := true
 	_ = first
@@ -109,7 +109,7 @@ func (v HitSetTotal) MarshalEasyJSON(w *jwriter.Writer) {
 }
 
 // MarshalEasyJSON supports easyjson.Marshaler interface
-func (v Hit) MarshalEasyJSON(w *jwriter.Writer, desired map[string]bool) {
+func (v Hit) MarshalEasyJSON(w *jwriter.Writer, desired Fields) {
 	w.RawByte('{')
 	first := true
 	_ = first
@@ -137,14 +137,12 @@ func (v Hit) MarshalEasyJSON(w *jwriter.Writer, desired map[string]bool) {
 }
 
 // MarshalEasyJSON supports easyjson.Marshaler interface
-func (v Details) MarshalEasyJSON(w *jwriter.Writer, desired map[string]bool) {
+func (v Details) MarshalEasyJSON(w *jwriter.Writer, desired Fields) {
 	w.RawByte('{')
 	first := true
 	_ = first
 
-	doAllFields := len(desired) == 0
-
-	if doAllFields || desired["ACCOUNTING_NAME"] {
+	if WantsField(desired, FieldAccountingName) {
 		const prefix string = ",\"ACCOUNTING_NAME\":"
 		if first {
 			first = false
@@ -155,7 +153,7 @@ func (v Details) MarshalEasyJSON(w *jwriter.Writer, desired map[string]bool) {
 		w.String(string(v.AccountingName))
 	}
 
-	if doAllFields || desired["AVAIL_CPU_TIME_SEC"] {
+	if WantsField(desired, FieldAvailCPUTimeSec) {
 		const prefix string = ",\"AVAIL_CPU_TIME_SEC\":"
 		if first {
 			first = false
@@ -166,7 +164,7 @@ func (v Details) MarshalEasyJSON(w *jwriter.Writer, desired map[string]bool) {
 		w.Int64(int64(v.AvailCPUTimeSec))
 	}
 
-	if doAllFields || desired["BOM"] {
+	if WantsField(desired, FieldBOM) {
 		const prefix string = ",\"BOM\":"
 		if first {
 			first = false
@@ -177,7 +175,7 @@ func (v Details) MarshalEasyJSON(w *jwriter.Writer, desired map[string]bool) {
 		w.String(string(v.BOM))
 	}
 
-	if doAllFields || desired["Command"] {
+	if WantsField(desired, FieldCommand) {
 		const prefix string = ",\"Command\":"
 		if first {
 			first = false
@@ -188,7 +186,7 @@ func (v Details) MarshalEasyJSON(w *jwriter.Writer, desired map[string]bool) {
 		w.String(string(v.Command))
 	}
 
-	if doAllFields || desired["JOB_NAME"] {
+	if WantsField(desired, FieldJobName) {
 		const prefix string = ",\"JOB_NAME\":"
 		if first {
 			first = false
@@ -199,7 +197,7 @@ func (v Details) MarshalEasyJSON(w *jwriter.Writer, desired map[string]bool) {
 		w.String(string(v.JobName))
 	}
 
-	if doAllFields || desired["Job"] {
+	if WantsField(desired, FieldJob) {
 		const prefix string = ",\"Job\":"
 		if first {
 			first = false
@@ -210,7 +208,7 @@ func (v Details) MarshalEasyJSON(w *jwriter.Writer, desired map[string]bool) {
 		w.String(string(v.Job))
 	}
 
-	if doAllFields || desired["MEM_REQUESTED_MB"] {
+	if WantsField(desired, FieldMemRequestedMB) {
 		const prefix string = ",\"MEM_REQUESTED_MB\":"
 		if first {
 			first = false
@@ -221,7 +219,7 @@ func (v Details) MarshalEasyJSON(w *jwriter.Writer, desired map[string]bool) {
 		w.Int64(int64(v.MemRequestedMB))
 	}
 
-	if doAllFields || desired["MEM_REQUESTED_MB_SEC"] {
+	if WantsField(desired, FieldMemRequestedMBSec) {
 		const prefix string = ",\"MEM_REQUESTED_MB_SEC\":"
 		if first {
 			first = false
@@ -232,7 +230,7 @@ func (v Details) MarshalEasyJSON(w *jwriter.Writer, desired map[string]bool) {
 		w.Int64(int64(v.MemRequestedMBSec))
 	}
 
-	if doAllFields || desired["NUM_EXEC_PROCS"] {
+	if WantsField(desired, FieldNumExecProcs) {
 		const prefix string = ",\"NUM_EXEC_PROCS\":"
 		if first {
 			first = false
@@ -243,7 +241,7 @@ func (v Details) MarshalEasyJSON(w *jwriter.Writer, desired map[string]bool) {
 		w.Int64(int64(v.NumExecProcs))
 	}
 
-	if doAllFields || desired["PENDING_TIME_SEC"] {
+	if WantsField(desired, FieldPendingTimeSec) {
 		const prefix string = ",\"PENDING_TIME_SEC\":"
 		if first {
 			first = false
@@ -254,7 +252,7 @@ func (v Details) MarshalEasyJSON(w *jwriter.Writer, desired map[string]bool) {
 		w.Int64(int64(v.PendingTimeSec))
 	}
 
-	if doAllFields || desired["QUEUE_NAME"] {
+	if WantsField(desired, FieldQueueName) {
 		const prefix string = ",\"QUEUE_NAME\":"
 		if first {
 			first = false
@@ -265,7 +263,7 @@ func (v Details) MarshalEasyJSON(w *jwriter.Writer, desired map[string]bool) {
 		w.String(string(v.QueueName))
 	}
 
-	if doAllFields || desired["RUN_TIME_SEC"] {
+	if WantsField(desired, FieldRunTimeSec) {
 		const prefix string = ",\"RUN_TIME_SEC\":"
 		if first {
 			first = false
@@ -276,7 +274,7 @@ func (v Details) MarshalEasyJSON(w *jwriter.Writer, desired map[string]bool) {
 		w.Int64(int64(v.RunTimeSec))
 	}
 
-	if doAllFields || desired["timestamp"] {
+	if WantsField(desired, FieldTimestamp) {
 		const prefix string = ",\"timestamp\":"
 		if first {
 			first = false
@@ -287,7 +285,7 @@ func (v Details) MarshalEasyJSON(w *jwriter.Writer, desired map[string]bool) {
 		w.Int64(int64(v.Timestamp))
 	}
 
-	if doAllFields || desired["USER_NAME"] {
+	if WantsField(desired, FieldUserName) {
 		const prefix string = ",\"USER_NAME\":"
 		if first {
 			first = false
@@ -298,7 +296,7 @@ func (v Details) MarshalEasyJSON(w *jwriter.Writer, desired map[string]bool) {
 		w.String(string(v.UserName))
 	}
 
-	if doAllFields || desired["WASTED_CPU_SECONDS"] {
+	if WantsField(desired, FieldWastedCPUSeconds) {
 		const prefix string = ",\"WASTED_CPU_SECONDS\":"
 		if first {
 			first = false
@@ -309,7 +307,7 @@ func (v Details) MarshalEasyJSON(w *jwriter.Writer, desired map[string]bool) {
 		w.Float64(float64(v.WastedCPUSeconds))
 	}
 
-	if doAllFields || desired["WASTED_MB_SECONDS"] {
+	if WantsField(desired, FieldWastedMBSeconds) {
 		const prefix string = ",\"WASTED_MB_SECONDS\":"
 		if first {
 			first = false

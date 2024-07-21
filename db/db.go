@@ -424,7 +424,7 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 	result := es.NewResult()
 
 	d.operateOnRequestedDays(filter, func(fi *flatIndex) {
-		if err := fi.Scroll(filter, result, query.Source); err != nil {
+		if err := fi.Scroll(filter, result); err != nil {
 			result.AddError(err)
 		}
 	})
