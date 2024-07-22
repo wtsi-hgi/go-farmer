@@ -28,6 +28,8 @@ package cmd
 import (
 	"log/slog"
 	"os"
+	"runtime"
+	"runtime/pprof"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -45,6 +47,7 @@ const (
 var demoPeriod string
 var demoDebug bool
 var demoFirst bool
+var demoPprof string
 
 var demoCmd = &cobra.Command{
 	Use:   "demo",
@@ -64,6 +67,10 @@ var demoCmd = &cobra.Command{
  
  Optionally, say --debug for extra timing info, and --first to show the full
  details of the first result of each query.
+
+ Optionally, say --pprof which will only do the larger non-agg query, and
+ generate a pprof cpu profile only for the 2nd uncached run of that query
+ without JSON decoding.
  `,
 	Run: func(_ *cobra.Command, _ []string) {
 		config := ParseConfig()
@@ -98,6 +105,8 @@ func init() {
 		"output additional debug info")
 	demoCmd.Flags().BoolVarP(&demoFirst, "first", "f", false,
 		"output details of first result for each query")
+	demoCmd.Flags().StringVar(&demoPprof, "pprof", "",
+		"output profiling data to files with the given prefix path")
 }
 
 func demo(config *YAMLConfig, period int) { //nolint:funlen,gocognit,gocyclo
@@ -191,13 +200,15 @@ func demo(config *YAMLConfig, period int) { //nolint:funlen,gocognit,gocyclo
 		},
 	}
 
-	timeSearch("aggregation query", func() ([]byte, error) {
-		return cq.Search(bomQuery)
-	})
+	if demoPprof == "" {
+		timeSearch("aggregation query", func() ([]byte, error) {
+			return cq.Search(bomQuery)
+		})
 
-	timeSearch("aggregation query (cached)", func() ([]byte, error) {
-		return cq.Search(bomQuery)
-	})
+		timeSearch("aggregation query (cached)", func() ([]byte, error) {
+			return cq.Search(bomQuery)
+		})
+	}
 
 	lte := "2024-06-04T00:00:00Z"
 	gte := "2024-05-04T00:00:00Z"
@@ -229,6 +240,12 @@ func demo(config *YAMLConfig, period int) { //nolint:funlen,gocognit,gocyclo
 	timeSearch("non-agg query, large team", func() ([]byte, error) {
 		return cq.Scroll(teamQuery)
 	})
+
+	if demoPprof != "" {
+		doDemoPprof(ldb, teamQuery)
+
+		return
+	}
 
 	timeSearch("non-agg query, large team (repeated with no cache)", func() ([]byte, error) {
 		cq2, err := cache.New(client, ldb, 1)
@@ -359,4 +376,35 @@ func printHitInfo(result *es.Result) {
 	if demoFirst {
 		cliPrint("first hit: %+v\n", result.HitSet.Hits[0].Details)
 	}
+}
+
+func doDemoPprof(ldb *db.DB, query *es.Query) {
+	fCPU, err := os.Create(demoPprof + ".cpu")
+	if err != nil {
+		die("failed to create pprof output file: %s", err)
+	}
+
+	defer fCPU.Close()
+
+	runtime.GC()
+	pprof.StartCPUProfile(fCPU) //nolint:errcheck
+
+	defer pprof.StopCPUProfile()
+
+	cliPrint("\n---------------------------\n")
+	cliPrint("non-agg query, large team (repeated with no cache, no JSON):\n")
+
+	t := time.Now()
+
+	result, err := ldb.Scroll(query)
+	if err != nil {
+		die("failed to scroll: %s", err)
+	}
+
+	cliPrint("overall, search took: %s\n", time.Since(t))
+
+	printAggInfo(result)
+	printHitInfo(result)
+
+	cliPrint("---------------------------\n")
 }
