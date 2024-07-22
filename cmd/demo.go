@@ -302,6 +302,8 @@ func demo(config *YAMLConfig, period int) { //nolint:funlen,gocognit,gocyclo
 	timeSearch("non-agg query, gpu", func() ([]byte, error) {
 		return cq.Scroll(gpuQuery)
 	})
+
+	timeUsers(ldb, teamQuery)
 }
 
 func initDB(client *es.Client, config db.Config, p int) error {
@@ -405,6 +407,24 @@ func doDemoPprof(ldb *db.DB, query *es.Query) {
 
 	printAggInfo(result)
 	printHitInfo(result)
+
+	cliPrint("---------------------------\n")
+}
+
+func timeUsers(ldb *db.DB, query *es.Query) {
+	cliPrint("\n---------------------------\n")
+	cliPrint("users (pure index) query:\n")
+
+	t := time.Now()
+
+	usernames, err := ldb.Usernames(query)
+	if err != nil {
+		die("failed to scroll: %s", err)
+	}
+
+	cliPrint("overall, search took: %s\n", time.Since(t))
+
+	cliPrint("users: %s\n", usernames)
 
 	cliPrint("---------------------------\n")
 }
