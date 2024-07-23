@@ -281,13 +281,13 @@ func DeserializeDetails(encoded []byte, desired Fields) (*Details, error) { //no
 		err error
 	)
 
-	n, details.ID, err = bstd.UnmarshalString(0, encoded)
+	n, details.ID, err = bstd.UnmarshalUnsafeString(0, encoded)
 	if err != nil {
 		return nil, err
 	}
 
 	if WantsField(desired, FieldAccountingName) {
-		n, details.AccountingName, err = bstd.UnmarshalString(n, encoded)
+		n, details.AccountingName, err = bstd.UnmarshalUnsafeString(n, encoded)
 	} else {
 		n, err = bstd.SkipString(n, encoded)
 	}
@@ -307,7 +307,7 @@ func DeserializeDetails(encoded []byte, desired Fields) (*Details, error) { //no
 	}
 
 	if WantsField(desired, FieldBOM) {
-		n, details.BOM, err = bstd.UnmarshalString(n, encoded)
+		n, details.BOM, err = bstd.UnmarshalUnsafeString(n, encoded)
 	} else {
 		n, err = bstd.SkipString(n, encoded)
 	}
@@ -317,7 +317,7 @@ func DeserializeDetails(encoded []byte, desired Fields) (*Details, error) { //no
 	}
 
 	if WantsField(desired, FieldCommand) {
-		n, details.Command, err = bstd.UnmarshalString(n, encoded)
+		n, details.Command, err = bstd.UnmarshalUnsafeString(n, encoded)
 	} else {
 		n, err = bstd.SkipString(n, encoded)
 	}
@@ -327,7 +327,7 @@ func DeserializeDetails(encoded []byte, desired Fields) (*Details, error) { //no
 	}
 
 	if WantsField(desired, FieldJobName) {
-		n, details.JobName, err = bstd.UnmarshalString(n, encoded)
+		n, details.JobName, err = bstd.UnmarshalUnsafeString(n, encoded)
 	} else {
 		n, err = bstd.SkipString(n, encoded)
 	}
@@ -337,7 +337,7 @@ func DeserializeDetails(encoded []byte, desired Fields) (*Details, error) { //no
 	}
 
 	if WantsField(desired, FieldJob) {
-		n, details.Job, err = bstd.UnmarshalString(n, encoded)
+		n, details.Job, err = bstd.UnmarshalUnsafeString(n, encoded)
 	} else {
 		n, err = bstd.SkipString(n, encoded)
 	}
@@ -387,7 +387,7 @@ func DeserializeDetails(encoded []byte, desired Fields) (*Details, error) { //no
 	}
 
 	if WantsField(desired, FieldQueueName) {
-		n, details.QueueName, err = bstd.UnmarshalString(n, encoded)
+		n, details.QueueName, err = bstd.UnmarshalUnsafeString(n, encoded)
 	} else {
 		n, err = bstd.SkipString(n, encoded)
 	}
@@ -417,7 +417,7 @@ func DeserializeDetails(encoded []byte, desired Fields) (*Details, error) { //no
 	}
 
 	if WantsField(desired, FieldUserName) {
-		n, details.UserName, err = bstd.UnmarshalString(n, encoded)
+		n, details.UserName, err = bstd.UnmarshalUnsafeString(n, encoded)
 	} else {
 		n, err = bstd.SkipString(n, encoded)
 	}
