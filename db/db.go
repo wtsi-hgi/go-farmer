@@ -428,32 +428,31 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 	}
 
 	var (
-		numHits   int
-		lenHits   int64
-		allLDEs   [][]localDataEntry
-		lastIndex *flatIndex
+		mu      sync.Mutex
+		numHits int
+		lenHits int64
 	)
 
-	ldeSetIndex := -1
+	allLDEs := make(map[string][]localDataEntry)
 
 	d.operateOnRequestedDays(filter, func(fi *flatIndex) {
-		if fi != lastIndex {
-			allLDEs = append(allLDEs, []localDataEntry{})
-			ldeSetIndex++
+		entries := fi.IndexSearch(filter)
+		if len(entries) == 0 {
+			return
 		}
 
-		entries := fi.IndexSearch(filter)
-		numHits += len(entries)
 		ldes := make([]localDataEntry, len(entries))
+
+		mu.Lock()
+		defer mu.Unlock()
 
 		for i, entry := range entries {
 			ldes[i] = localDataEntry{fi, entry, lenHits}
 			lenHits += int64(entry.length)
+			numHits++
 		}
 
-		allLDEs[ldeSetIndex] = append(allLDEs[ldeSetIndex], ldes...)
-
-		lastIndex = fi
+		allLDEs[fi.dataPath] = append(allLDEs[fi.dataPath], ldes...)
 	})
 
 	hits := make([]es.Hit, numHits)
@@ -474,10 +473,6 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 	eg := errgroup.Group{}
 
 	for _, ldes := range allLDEs {
-		if len(ldes) == 0 {
-			continue
-		}
-
 		startingHitIndex := hitI
 		theseLDEs := ldes
 
@@ -523,13 +518,21 @@ func getIndexEntriesHits(buf []byte, ldes []localDataEntry, fields es.Fields, hi
 func (d *DB) operateOnRequestedDays(filter *flatFilter, cb func(*flatIndex)) {
 	currentDay := filter.GTE
 
+	var wg sync.WaitGroup
+
 	for {
 		d.mu.RLock()
 		indexes := d.dateBOMDirs[filepath.Join(d.dateFolder(currentDay), filter.BOM)]
 		d.mu.RUnlock()
 
+		wg.Add(len(indexes))
+
 		for _, index := range indexes {
-			cb(index)
+			go func(dbIndex *flatIndex) {
+				defer wg.Done()
+
+				cb(dbIndex)
+			}(index)
 		}
 
 		currentDay = currentDay.Add(oneDay)
@@ -538,6 +541,8 @@ func (d *DB) operateOnRequestedDays(filter *flatFilter, cb func(*flatIndex)) {
 			break
 		}
 	}
+
+	wg.Wait()
 }
 
 func (d *DB) dateFolder(day time.Time) string {
@@ -552,30 +557,20 @@ func (d *DB) Usernames(query *es.Query) ([]string, error) {
 		return nil, err
 	}
 
-	var wg sync.WaitGroup
-
 	var mu sync.Mutex
 
 	usernamesMap := make(map[string]bool)
 
 	d.operateOnRequestedDays(filter, func(fi *flatIndex) {
-		wg.Add(1)
+		theseUsernames := fi.Usernames(filter)
 
-		go func() {
-			defer wg.Done()
+		mu.Lock()
+		defer mu.Unlock()
 
-			theseUsernames := fi.Usernames(filter)
-
-			mu.Lock()
-			defer mu.Unlock()
-
-			for name := range theseUsernames {
-				usernamesMap[strings.TrimSpace(name)] = true
-			}
-		}()
+		for name := range theseUsernames {
+			usernamesMap[strings.TrimSpace(name)] = true
+		}
 	})
-
-	wg.Wait()
 
 	usernames := make([]string, 0, len(usernamesMap))
 	for username := range usernamesMap {
