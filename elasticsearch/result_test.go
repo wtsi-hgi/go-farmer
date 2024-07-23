@@ -26,9 +26,7 @@
 package elasticsearch
 
 import (
-	"strconv"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/deneonet/benc"
@@ -206,65 +204,5 @@ func TestDetails(t *testing.T) {
 		So(recovered.Job, ShouldContainSubstring, truncationIndicator)
 		So(recovered.QueueName, ShouldEqual, details.QueueName)
 		So(recovered.UserName, ShouldEqual, details.UserName)
-	})
-}
-
-func TestHitSet(t *testing.T) {
-	Convey("You can add Hits to a HitSet in parallel", t, func() {
-		hitSet := &HitSet{}
-
-		numHits := 100
-
-		runOpInParallel(func(id string) {
-			hitSet.AddHit(id, &Details{Command: "cmd." + id})
-		}, numHits)
-
-		So(len(hitSet.Hits), ShouldEqual, numHits)
-		So(hitSet.Total.Value, ShouldEqual, numHits)
-	})
-
-	Convey("You can add Hits to a Result in parallel", t, func() {
-		result := NewResult()
-
-		numHits := 100
-
-		runOpInParallel(func(id string) {
-			result.AddHitDetails(&Details{Command: "cmd." + id})
-		}, numHits)
-
-		So(len(result.HitSet.Hits), ShouldEqual, numHits)
-		So(result.HitSet.Total.Value, ShouldEqual, numHits)
-	})
-}
-
-func runOpInParallel(op func(string), count int) {
-	var wg sync.WaitGroup //nolint:varnamelen
-
-	wg.Add(count)
-
-	for i := range count {
-		id := strconv.Itoa(i)
-
-		go func(id string) {
-			defer wg.Done()
-
-			op(id)
-		}(id)
-	}
-
-	wg.Wait()
-}
-
-func TestResultErrors(t *testing.T) {
-	Convey("You can add errors to a Result in parallel", t, func() {
-		result := NewResult()
-
-		numErrors := 100
-
-		runOpInParallel(func(id string) {
-			result.AddError(Error{Msg: id})
-		}, numErrors)
-
-		So(len(result.Errors()), ShouldEqual, numErrors)
 	})
 }

@@ -28,8 +28,6 @@ package elasticsearch
 
 import (
 	"fmt"
-	"log/slog"
-	"sync"
 
 	"github.com/deneonet/benc"
 	"github.com/deneonet/benc/bstd"
@@ -69,8 +67,6 @@ type Result struct {
 	TimedOut     bool          `json:"timed_out"`
 	HitSet       *HitSet       `json:"hits"`
 	Aggregations *Aggregations `json:"aggregations,omitempty"`
-	errors       []error
-	mu           sync.Mutex
 }
 
 // NewResult returns a Result with an empty HitSet in it, suitable for adding
@@ -81,62 +77,15 @@ func NewResult() *Result {
 	}
 }
 
-// AddHitDetails can be used if constructing your own Hits manually, with the
-// Hit ID actually stored in the details (temporarily). It is thread safe.
-func (r *Result) AddHitDetails(details *Details) {
-	id := details.ID
-	details.ID = ""
-	r.HitSet.AddHit(id, details)
-}
-
-// AddError can be used to store errors generated while creating a Result in a
-// thread-safe way.
-func (r *Result) AddError(err error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.errors = append(r.errors, err)
-}
-
-// Errors returns any errors that were passed to AddError(). Returns nil if
-// AddError() was not used.
-func (r *Result) Errors() []error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if len(r.errors) == 0 {
-		return nil
-	}
-
-	result := make([]error, len(r.errors))
-	copy(result, r.errors)
-
-	return result
-}
-
 // HitSet is the container of all Hits, plus a Total.Value which may tell you
 // the total number of matching documents.
 type HitSet struct {
 	Total HitSetTotal `json:"total"`
 	Hits  []Hit       `json:"hits"`
-	mu    sync.Mutex
 }
 
 type HitSetTotal struct {
 	Value int `json:"value"`
-}
-
-// AddHit can be used if constructing your own Hits manually. It is thread safe.
-func (h *HitSet) AddHit(id string, details *Details) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	h.Hits = append(h.Hits, Hit{
-		ID:      id,
-		Details: details,
-	})
-
-	h.Total.Value++
 }
 
 type Hit struct {
@@ -497,12 +446,12 @@ func DeserializeDetails(encoded []byte, desired Fields) (*Details, error) { //no
 	}
 
 	err = benc.VerifyUnmarshal(n, encoded)
-	if err != nil {
-		slog.Error("unmarhsal failed", "err", err, "encoded", string(encoded),
-			"attempt", details, "cmd_length", len(details.Command),
-			"jobname_length", len(details.JobName), "job_length", len(details.Job),
-			"encoded_length", len(encoded), "n", n)
-	}
+	// if err != nil {
+	// 	slog.Error("unmarhsal failed", "err", err,
+	// 		"attempt", details, "cmd_length", len(details.Command),
+	// 		"jobname_length", len(details.JobName), "job_length", len(details.Job),
+	// 		"encoded_length", len(encoded), "n", n)
+	// }
 
 	return details, err
 }

@@ -33,8 +33,6 @@ import (
 	"io"
 	"os"
 	"strings"
-
-	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
 )
 
 const (
@@ -280,11 +278,11 @@ func btoi(b []byte) int {
 	return int(binary.BigEndian.Uint32(b[0:4]))
 }
 
-func (f *flatIndex) Scroll(filter *flatFilter, result *es.Result) error {
+func (f *flatIndex) IndexSearch(filter *flatFilter) []*flatIndexEntry {
 	entries := f.getEntries(filter)
 	check := filter.PassChecker()
 
-	defer f.close()
+	passEntries := make([]*flatIndexEntry, 0, len(entries))
 
 	for _, entry := range entries {
 		continueOK, passes := entry.Passes(check)
@@ -296,20 +294,10 @@ func (f *flatIndex) Scroll(filter *flatFilter, result *es.Result) error {
 			continue
 		}
 
-		data, err := f.getDataEntry(entry)
-		if err != nil {
-			return err
-		}
-
-		d, err := es.DeserializeDetails(data, filter.desiredFields)
-		if err != nil {
-			return err
-		}
-
-		result.AddHitDetails(d)
+		passEntries = append(passEntries, entry)
 	}
 
-	return nil
+	return passEntries
 }
 
 func (f *flatIndex) getEntries(filter *flatFilter) []*flatIndexEntry {
@@ -337,25 +325,24 @@ func (f *flatIndex) close() {
 	f.fh = nil
 }
 
-func (f *flatIndex) getDataEntry(entry *flatIndexEntry) ([]byte, error) {
+func (f *flatIndex) getDataEntry(buf []byte, entry *flatIndexEntry) error {
 	err := f.openDataFile()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	if entry.index != f.lastPos {
 		_, err = f.fh.Seek(entry.index, 0)
 		if err != nil {
-			return nil, err
+			return err
 		}
 	}
 
-	data := make([]byte, entry.length)
-	_, err = io.ReadFull(f.fh, data)
+	_, err = io.ReadFull(f.fh, buf)
 
 	f.lastPos = entry.index + int64(entry.length)
 
-	return data, err
+	return err
 }
 
 func (f *flatIndex) openDataFile() error {

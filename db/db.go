@@ -412,6 +412,12 @@ func i64tob(v int64) []byte {
 	return b
 }
 
+type localDataEntry struct {
+	fi    *flatIndex
+	entry *flatIndexEntry
+	start int64
+}
+
 // Scroll returns all the hits that pass certain match and prefix filter terms
 // in the given query, in the query's timestamp date range (which must be
 // expressed with specific lte and gte RFC3339 values).
@@ -421,27 +427,100 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 		return nil, err
 	}
 
-	result := es.NewResult()
+	var (
+		numHits   int
+		lenHits   int64
+		allLDEs   [][]localDataEntry
+		lastIndex *flatIndex
+	)
+
+	ldeSetIndex := -1
 
 	d.operateOnRequestedDays(filter, func(fi *flatIndex) {
-		if err := fi.Scroll(filter, result); err != nil {
-			result.AddError(err)
+		if fi != lastIndex {
+			allLDEs = append(allLDEs, []localDataEntry{})
+			ldeSetIndex++
 		}
+
+		entries := fi.IndexSearch(filter)
+		numHits += len(entries)
+		ldes := make([]localDataEntry, len(entries))
+
+		for i, entry := range entries {
+			ldes[i] = localDataEntry{fi, entry, lenHits}
+			lenHits += int64(entry.length)
+		}
+
+		allLDEs[ldeSetIndex] = append(allLDEs[ldeSetIndex], ldes...)
+
+		lastIndex = fi
 	})
 
-	errors := result.Errors()
-	if len(errors) > 0 {
-		return nil, errors[0]
+	hits := make([]es.Hit, numHits)
+	result := &es.Result{
+		ScrollID: pretendScrollID,
+		HitSet: &es.HitSet{
+			Total: es.HitSetTotal{Value: numHits},
+			Hits:  hits,
+		},
 	}
 
-	result.ScrollID = pretendScrollID
+	if numHits == 0 {
+		return result, nil
+	}
 
-	return result, nil
+	buf := make([]byte, lenHits)
+	hitI := 0
+	eg := errgroup.Group{}
+
+	for _, ldes := range allLDEs {
+		if len(ldes) == 0 {
+			continue
+		}
+
+		startingHitIndex := hitI
+		theseLDEs := ldes
+
+		eg.Go(func() error {
+			return getIndexEntriesHits(buf, theseLDEs, filter.desiredFields, hits, startingHitIndex)
+		})
+
+		hitI += len(ldes)
+	}
+
+	err = eg.Wait()
+
+	return result, err
+}
+
+func getIndexEntriesHits(buf []byte, ldes []localDataEntry, fields es.Fields, hits []es.Hit, hitIndex int) error {
+	for _, lde := range ldes {
+		data := buf[lde.start : lde.start+int64(lde.entry.length)]
+
+		err := lde.fi.getDataEntry(data, lde.entry)
+		if err != nil {
+			return err
+		}
+
+		details, err := es.DeserializeDetails(data, fields)
+		if err != nil {
+			return err
+		}
+
+		hits[hitIndex] = es.Hit{
+			ID:      details.ID,
+			Details: details,
+		}
+
+		hitIndex++
+	}
+
+	ldes[0].fi.close()
+
+	return nil
 }
 
 func (d *DB) operateOnRequestedDays(filter *flatFilter, cb func(*flatIndex)) {
-	var wg sync.WaitGroup
-
 	currentDay := filter.GTE
 
 	for {
@@ -449,14 +528,8 @@ func (d *DB) operateOnRequestedDays(filter *flatFilter, cb func(*flatIndex)) {
 		indexes := d.dateBOMDirs[filepath.Join(d.dateFolder(currentDay), filter.BOM)]
 		d.mu.RUnlock()
 
-		wg.Add(len(indexes))
-
 		for _, index := range indexes {
-			go func(dbIndex *flatIndex) {
-				defer wg.Done()
-
-				cb(dbIndex)
-			}(index)
+			cb(index)
 		}
 
 		currentDay = currentDay.Add(oneDay)
@@ -465,8 +538,6 @@ func (d *DB) operateOnRequestedDays(filter *flatFilter, cb func(*flatIndex)) {
 			break
 		}
 	}
-
-	wg.Wait()
 }
 
 func (d *DB) dateFolder(day time.Time) string {
@@ -481,20 +552,30 @@ func (d *DB) Usernames(query *es.Query) ([]string, error) {
 		return nil, err
 	}
 
+	var wg sync.WaitGroup
+
 	var mu sync.Mutex
 
 	usernamesMap := make(map[string]bool)
 
 	d.operateOnRequestedDays(filter, func(fi *flatIndex) {
-		theseUsernames := fi.Usernames(filter)
+		wg.Add(1)
 
-		mu.Lock()
-		defer mu.Unlock()
+		go func() {
+			defer wg.Done()
 
-		for name := range theseUsernames {
-			usernamesMap[strings.TrimSpace(name)] = true
-		}
+			theseUsernames := fi.Usernames(filter)
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			for name := range theseUsernames {
+				usernamesMap[strings.TrimSpace(name)] = true
+			}
+		}()
 	})
+
+	wg.Wait()
 
 	usernames := make([]string, 0, len(usernamesMap))
 	for username := range usernamesMap {

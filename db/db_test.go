@@ -229,7 +229,7 @@ func TestDB(t *testing.T) {
 				query.Query.Bool.Filter = append(query.Query.Bool.Filter, bomMatch)
 				retrieved, err := db.Scroll(query)
 				So(err, ShouldBeNil)
-				So(retrieved.HitSet.Hits, ShouldBeNil)
+				So(len(retrieved.HitSet.Hits), ShouldEqual, 0)
 
 				db, err = New(config, false)
 				So(err, ShouldBeNil)
@@ -414,24 +414,27 @@ func makeResult(gte, lte time.Time) *es.Result {
 			jName = ""
 		}
 
-		result.HitSet.AddHit("", &es.Details{
-			Timestamp:         timeStamp.Unix(),
-			BOM:               bom,
-			AccountingName:    aName,
-			UserName:          uName,
-			QueueName:         qName,
-			Command:           "cmd",
-			JobName:           jName,
-			Job:               "job",
-			MemRequestedMB:    1,
-			MemRequestedMBSec: 2,
-			NumExecProcs:      3,
-			PendingTimeSec:    4,
-			RunTimeSec:        5,
-			WastedCPUSeconds:  6.1,
-			WastedMBSeconds:   7.1,
-		})
+		hit := es.Hit{
+			Details: &es.Details{
+				Timestamp:         timeStamp.Unix(),
+				BOM:               bom,
+				AccountingName:    aName,
+				UserName:          uName,
+				QueueName:         qName,
+				Command:           "cmd",
+				JobName:           jName,
+				Job:               "job",
+				MemRequestedMB:    1,
+				MemRequestedMBSec: 2,
+				NumExecProcs:      3,
+				PendingTimeSec:    4,
+				RunTimeSec:        5,
+				WastedCPUSeconds:  6.1,
+				WastedMBSeconds:   7.1,
+			},
+		}
 
+		result.HitSet.Hits = append(result.HitSet.Hits, hit)
 		hits++
 		timeStamp = timeStamp.Add(1 * time.Second)
 	}
