@@ -124,14 +124,18 @@ type DB struct {
 	dir                  string
 	fileSize             int
 	bufferSize           int
-	bufPool              *sync.Pool
-	poolPtrs             map[string][]*[]byte
-	dateBOMDirs          map[string][]*flatIndex
 	updateFrequency      time.Duration
 	checkBackfillSuccess bool
 	latestDate           time.Time
 	stopMonitoring       chan bool
-	mu                   sync.RWMutex
+
+	muDateBOMDirs sync.RWMutex
+	dateBOMDirs   map[string][]*flatIndex
+
+	muPool                  sync.Mutex
+	bufPool                 []*[]byte
+	poolInUse               []bool
+	poolQueryToInUseIndexes map[string][]int
 }
 
 // New returns a DB that will create or use the database files in the configured
@@ -149,20 +153,13 @@ type DB struct {
 // whole day database files.
 func New(config Config, checkBackfillSuccess bool) (*DB, error) {
 	db := &DB{
-		dir:        config.Directory,
-		fileSize:   config.FileSizeOrDefault(),
-		bufferSize: config.BufferSizeOrDefault(),
-		bufPool: &sync.Pool{
-			New: func() interface{} {
-				s := make([]byte, es.MaxEncodedDetailsLength)
-
-				return &s
-			},
-		},
-		poolPtrs:             make(map[string][]*[]byte),
-		dateBOMDirs:          make(map[string][]*flatIndex),
-		updateFrequency:      config.UpdateFrequencyOrDefault(),
-		checkBackfillSuccess: checkBackfillSuccess,
+		dir:                     config.Directory,
+		fileSize:                config.FileSizeOrDefault(),
+		bufferSize:              config.BufferSizeOrDefault(),
+		updateFrequency:         config.UpdateFrequencyOrDefault(),
+		checkBackfillSuccess:    checkBackfillSuccess,
+		dateBOMDirs:             make(map[string][]*flatIndex),
+		poolQueryToInUseIndexes: make(map[string][]int),
 	}
 
 	_, err := os.Stat(config.Directory)
@@ -224,8 +221,8 @@ func (d *DB) loadFlatIndexAndUpdateLatestDate(path, subDir string) error {
 		return err
 	}
 
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	d.muDateBOMDirs.Lock()
+	defer d.muDateBOMDirs.Unlock()
 
 	d.dateBOMDirs[subDir] = append(d.dateBOMDirs[subDir], fi)
 
@@ -440,12 +437,12 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 	}
 
 	var (
-		mu       sync.Mutex
-		numHits  int
-		poolPtrs []*[]byte
+		mu      sync.Mutex
+		numHits int
 	)
 
 	allLDEs := make(map[string][]localDataEntry)
+	qkey := query.Key()
 
 	d.operateOnRequestedDays(filter, func(fi *flatIndex) {
 		entries := fi.IndexSearch(filter)
@@ -454,17 +451,14 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 		}
 
 		ldes := make([]localDataEntry, len(entries))
+		bufs := d.getFromBufPool(len(entries), qkey)
 
 		for i, entry := range entries {
-			ptr := d.bufPool.Get().(*[]byte)
-			slice := *ptr
-			*ptr = slice
 			ldes[i] = localDataEntry{
 				fi:    fi,
 				entry: entry,
-				data:  slice[:entry.length],
+				data:  bufs[i][:entry.length],
 			}
-			poolPtrs = append(poolPtrs, ptr)
 		}
 
 		mu.Lock()
@@ -473,10 +467,6 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 		numHits += len(entries)
 		allLDEs[fi.dataPath] = append(allLDEs[fi.dataPath], ldes...)
 	})
-
-	d.mu.Lock()
-	d.poolPtrs[query.Key()] = poolPtrs
-	d.mu.Unlock()
 
 	hits := make([]es.Hit, numHits)
 	result := &es.Result{
@@ -541,9 +531,9 @@ func (d *DB) operateOnRequestedDays(filter *flatFilter, cb func(*flatIndex)) {
 	var wg sync.WaitGroup
 
 	for {
-		d.mu.RLock()
+		d.muDateBOMDirs.RLock()
 		indexes := d.dateBOMDirs[filepath.Join(d.dateFolder(currentDay), filter.BOM)]
-		d.mu.RUnlock()
+		d.muDateBOMDirs.RUnlock()
 
 		wg.Add(len(indexes))
 
@@ -569,6 +559,58 @@ func (d *DB) dateFolder(day time.Time) string {
 	return fmt.Sprintf("%s/%s", d.dir, day.UTC().Format(dateFormat))
 }
 
+func (d *DB) getFromBufPool(num int, key string) [][]byte {
+	d.muPool.Lock()
+	defer d.muPool.Unlock()
+
+	assignedBufs := make([][]byte, num)
+	assignedIndexes := make([]int, num)
+	assignedI := 0
+
+	for i, buf := range d.bufPool {
+		if d.poolInUse[i] {
+			continue
+		}
+
+		slice := *buf
+
+		d.poolInUse[i] = true
+		assignedBufs[assignedI] = slice
+		assignedIndexes[assignedI] = i
+		assignedI++
+
+		*buf = slice
+
+		if assignedI == num {
+			break
+		}
+	}
+
+	stillNeeded := num - assignedI
+	poolI := len(d.bufPool) - 1
+
+	for range stillNeeded {
+		buf := make([]byte, es.MaxEncodedDetailsLength)
+		d.bufPool = append(d.bufPool, &buf)
+		d.poolInUse = append(d.poolInUse, true)
+		poolI++
+
+		assignedBufs[assignedI] = buf
+		assignedIndexes[assignedI] = poolI
+		assignedI++
+	}
+
+	pqi, existed := d.poolQueryToInUseIndexes[key]
+	if !existed {
+		d.poolQueryToInUseIndexes[key] = make([]int, 0)
+	}
+
+	pqi = append(pqi, assignedIndexes...)
+	d.poolQueryToInUseIndexes[key] = pqi
+
+	return assignedBufs
+}
+
 // Done must be called when you have finished using the Result returned by
 // Scroll(). It releases byte slices back to a pool so you don't run out of
 // memory. Returns true if there were slices associated with the given query,
@@ -576,18 +618,18 @@ func (d *DB) dateFolder(day time.Time) string {
 func (d *DB) Done(query *es.Query) bool {
 	qkey := query.Key()
 
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	d.muPool.Lock()
+	defer d.muPool.Unlock()
 
-	ptrs, found := d.poolPtrs[qkey]
+	pqi, found := d.poolQueryToInUseIndexes[qkey]
 	if !found {
 		return false
 	}
 
-	delete(d.poolPtrs, qkey)
+	delete(d.poolQueryToInUseIndexes, qkey)
 
-	for _, ptr := range ptrs {
-		d.bufPool.Put(ptr)
+	for _, i := range pqi {
+		d.poolInUse[i] = false
 	}
 
 	return true

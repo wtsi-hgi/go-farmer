@@ -362,9 +362,9 @@ func TestDB(t *testing.T) {
 				db, err = New(config, false)
 				So(err, ShouldBeNil)
 
-				db.mu.RLock()
+				db.muDateBOMDirs.RLock()
 				So(len(db.dateBOMDirs), ShouldEqual, 4)
-				db.mu.RUnlock()
+				db.muDateBOMDirs.RUnlock()
 
 				febDir := filepath.Join(dbDir, "2024", "02")
 				olderFile := filepath.Join(febDir, "03", bomA, "0.index")
@@ -376,8 +376,8 @@ func TestDB(t *testing.T) {
 				So(err, ShouldBeNil)
 
 				<-time.After(config.UpdateFrequencyOrDefault() * 2)
-				db.mu.RLock()
-				defer db.mu.RUnlock()
+				db.muDateBOMDirs.RLock()
+				defer db.muDateBOMDirs.RUnlock()
 
 				So(len(db.dateBOMDirs), ShouldEqual, 6)
 
