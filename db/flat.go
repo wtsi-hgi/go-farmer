@@ -193,7 +193,6 @@ type flatIndex struct {
 
 	dataPath string
 	fh       *os.File
-	lastPos  int64
 }
 
 func newFlatIndex(path string, fileBufferSize int) (*flatIndex, error) { //nolint:funlen,gocognit,gocyclo
@@ -316,31 +315,16 @@ func (f *flatIndex) getEntries(filter *flatFilter) []*flatIndexEntry {
 	return entries
 }
 
-func (f *flatIndex) close() {
-	if f.fh != nil {
-		return
-	}
-
-	f.fh.Close()
-	f.fh = nil
-}
-
 func (f *flatIndex) getDataEntry(buf []byte, entry *flatIndexEntry) error {
 	err := f.openDataFile()
 	if err != nil {
 		return err
 	}
 
-	if entry.index != f.lastPos {
-		_, err = f.fh.Seek(entry.index, 0)
-		if err != nil {
-			return err
-		}
+	n, err := f.fh.ReadAt(buf, entry.index)
+	if err != nil && n == entry.length {
+		err = nil
 	}
-
-	_, err = io.ReadFull(f.fh, buf)
-
-	f.lastPos = entry.index + int64(entry.length)
 
 	return err
 }
@@ -356,9 +340,17 @@ func (f *flatIndex) openDataFile() error {
 	}
 
 	f.fh = fh
-	f.lastPos = 0
 
 	return nil
+}
+
+func (f *flatIndex) close() {
+	if f.fh != nil {
+		return
+	}
+
+	f.fh.Close()
+	f.fh = nil
 }
 
 func (f *flatIndex) Usernames(filter *flatFilter) map[string]bool {
