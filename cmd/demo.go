@@ -381,6 +381,9 @@ func printHitInfo(result *es.Result) {
 }
 
 func doDemoPprof(ldb *db.DB, query *es.Query) {
+	ldb.Done(query)
+	defer ldb.Done(query)
+
 	fCPU, err := os.Create(demoPprof + ".cpu")
 	if err != nil {
 		die("failed to create pprof output file: %s", err)

@@ -36,7 +36,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/deneonet/benc"
 	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
 	"golang.org/x/sync/errgroup"
 )
@@ -125,7 +124,8 @@ type DB struct {
 	dir                  string
 	fileSize             int
 	bufferSize           int
-	bufPool              *benc.BufPool
+	bufPool              *sync.Pool
+	poolPtrs             map[string][]*[]byte
 	dateBOMDirs          map[string][]*flatIndex
 	updateFrequency      time.Duration
 	checkBackfillSuccess bool
@@ -149,10 +149,17 @@ type DB struct {
 // whole day database files.
 func New(config Config, checkBackfillSuccess bool) (*DB, error) {
 	db := &DB{
-		dir:                  config.Directory,
-		fileSize:             config.FileSizeOrDefault(),
-		bufferSize:           config.BufferSizeOrDefault(),
-		bufPool:              benc.NewBufPool(benc.WithBufferSize(es.MaxEncodedDetailsLength)),
+		dir:        config.Directory,
+		fileSize:   config.FileSizeOrDefault(),
+		bufferSize: config.BufferSizeOrDefault(),
+		bufPool: &sync.Pool{
+			New: func() interface{} {
+				s := make([]byte, es.MaxEncodedDetailsLength)
+
+				return &s
+			},
+		},
+		poolPtrs:             make(map[string][]*[]byte),
 		dateBOMDirs:          make(map[string][]*flatIndex),
 		updateFrequency:      config.UpdateFrequencyOrDefault(),
 		checkBackfillSuccess: checkBackfillSuccess,
@@ -354,7 +361,7 @@ func (d *DB) getFixedWidthFields(hit es.Hit) ([]byte, []byte, byte, []byte, erro
 
 	hit.Details.ID = hit.ID
 
-	encodedDetails, err := hit.Details.Serialize(d.bufPool) //nolint:misspell
+	encodedDetails, err := hit.Details.Serialize() //nolint:misspell
 	if err != nil {
 		return nil, nil, 0, nil, err
 	}
@@ -415,12 +422,17 @@ func i64tob(v int64) []byte {
 type localDataEntry struct {
 	fi    *flatIndex
 	entry *flatIndexEntry
-	start int64
+	data  []byte
 }
 
 // Scroll returns all the hits that pass certain match and prefix filter terms
 // in the given query, in the query's timestamp date range (which must be
 // expressed with specific lte and gte RFC3339 values).
+//
+// To avoid memory allocations and increase performance, the returned Result
+// Details are unsafely backed by a pool of byte slices. It is only safe to
+// release these to the pool once you are done with the Result. To avoid a
+// memory leak, you must signify when you are done by calling Done(query).
 func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 	filter, err := newFlatFilter(query)
 	if err != nil {
@@ -428,9 +440,9 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 	}
 
 	var (
-		mu      sync.Mutex
-		numHits int
-		lenHits int64
+		mu       sync.Mutex
+		numHits  int
+		poolPtrs []*[]byte
 	)
 
 	allLDEs := make(map[string][]localDataEntry)
@@ -443,17 +455,28 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 
 		ldes := make([]localDataEntry, len(entries))
 
+		for i, entry := range entries {
+			ptr := d.bufPool.Get().(*[]byte)
+			slice := *ptr
+			*ptr = slice
+			ldes[i] = localDataEntry{
+				fi:    fi,
+				entry: entry,
+				data:  slice[:entry.length],
+			}
+			poolPtrs = append(poolPtrs, ptr)
+		}
+
 		mu.Lock()
 		defer mu.Unlock()
 
-		for i, entry := range entries {
-			ldes[i] = localDataEntry{fi, entry, lenHits}
-			lenHits += int64(entry.length)
-			numHits++
-		}
-
+		numHits += len(entries)
 		allLDEs[fi.dataPath] = append(allLDEs[fi.dataPath], ldes...)
 	})
+
+	d.mu.Lock()
+	d.poolPtrs[query.Key()] = poolPtrs
+	d.mu.Unlock()
 
 	hits := make([]es.Hit, numHits)
 	result := &es.Result{
@@ -468,7 +491,6 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 		return result, nil
 	}
 
-	buf := make([]byte, lenHits)
 	hitI := 0
 	eg := errgroup.Group{}
 
@@ -477,7 +499,7 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 		theseLDEs := ldes
 
 		eg.Go(func() error {
-			return getIndexEntriesHits(buf, theseLDEs, filter.desiredFields, hits, startingHitIndex)
+			return d.getIndexEntriesHits(theseLDEs, filter.desiredFields, hits, startingHitIndex)
 		})
 
 		hitI += len(ldes)
@@ -488,16 +510,14 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 	return result, err
 }
 
-func getIndexEntriesHits(buf []byte, ldes []localDataEntry, fields es.Fields, hits []es.Hit, hitIndex int) error {
+func (d *DB) getIndexEntriesHits(ldes []localDataEntry, fields es.Fields, hits []es.Hit, hitIndex int) error {
 	for _, lde := range ldes {
-		data := buf[lde.start : lde.start+int64(lde.entry.length)]
-
-		err := lde.fi.getDataEntry(data, lde.entry)
+		err := lde.fi.getDataEntry(lde.data, lde.entry)
 		if err != nil {
 			return err
 		}
 
-		details, err := es.DeserializeDetails(data, fields)
+		details, err := es.DeserializeDetails(lde.data, fields)
 		if err != nil {
 			return err
 		}
@@ -547,6 +567,30 @@ func (d *DB) operateOnRequestedDays(filter *flatFilter, cb func(*flatIndex)) {
 
 func (d *DB) dateFolder(day time.Time) string {
 	return fmt.Sprintf("%s/%s", d.dir, day.UTC().Format(dateFormat))
+}
+
+// Done must be called when you have finished using the Result returned by
+// Scroll(). It releases byte slices back to a pool so you don't run out of
+// memory. Returns true if there were slices associated with the given query,
+// false if it did nothing because there were not.
+func (d *DB) Done(query *es.Query) bool {
+	qkey := query.Key()
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	ptrs, found := d.poolPtrs[qkey]
+	if !found {
+		return false
+	}
+
+	delete(d.poolPtrs, qkey)
+
+	for _, ptr := range ptrs {
+		d.bufPool.Put(ptr)
+	}
+
+	return true
 }
 
 // Usernames is like Scroll(), but picks out and returns only the unique

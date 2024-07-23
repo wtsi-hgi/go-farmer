@@ -28,6 +28,7 @@ package elasticsearch
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/deneonet/benc"
 	"github.com/deneonet/benc/bstd"
@@ -144,7 +145,7 @@ type Details struct {
 
 // Serialize converts a Details to a byte slice representation suitable for
 // storing on disk.
-func (d *Details) Serialize(bufPool *benc.BufPool) ([]byte, error) { //nolint:funlen,misspell
+func (d *Details) Serialize() ([]byte, error) { //nolint:funlen,misspell
 	d.headTailStrings()
 
 	var (
@@ -446,12 +447,12 @@ func DeserializeDetails(encoded []byte, desired Fields) (*Details, error) { //no
 	}
 
 	err = benc.VerifyUnmarshal(n, encoded)
-	// if err != nil {
-	// 	slog.Error("unmarhsal failed", "err", err,
-	// 		"attempt", details, "cmd_length", len(details.Command),
-	// 		"jobname_length", len(details.JobName), "job_length", len(details.Job),
-	// 		"encoded_length", len(encoded), "n", n)
-	// }
+	if err != nil {
+		slog.Error("unmarhsal failed", "err", err,
+			"attempt", details, "cmd_length", len(details.Command),
+			"jobname_length", len(details.JobName), "job_length", len(details.Job),
+			"encoded_length", len(encoded), "n", n)
+	}
 
 	return details, err
 }

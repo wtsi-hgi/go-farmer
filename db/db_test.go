@@ -225,6 +225,9 @@ func TestDB(t *testing.T) {
 				_, err = db.Scroll(query)
 				So(err, ShouldNotBeNil)
 
+				released := db.Done(query)
+				So(released, ShouldBeFalse)
+
 				bomMatch := map[string]es.MapStringStringOrMap{"match_phrase": map[string]interface{}{"BOM": bomA}}
 				query.Query.Bool.Filter = append(query.Query.Bool.Filter, bomMatch)
 				retrieved, err := db.Scroll(query)
@@ -259,6 +262,9 @@ func TestDB(t *testing.T) {
 				So(lastHitIndex, ShouldNotEqual, -1)
 				So(retrieved.HitSet.Hits[lastHitIndex].Details, ShouldResemble, result.HitSet.Hits[expectedNumHits-1].Details)
 
+				released = db.Done(query)
+				So(released, ShouldBeTrue)
+
 				usernames, err := db.Usernames(query)
 				So(err, ShouldBeNil)
 
@@ -286,6 +292,9 @@ func TestDB(t *testing.T) {
 				So(retrieved.HitSet, ShouldNotBeNil)
 				So(len(retrieved.HitSet.Hits), ShouldEqual, 8777)
 
+				released = db.Done(query)
+				So(released, ShouldBeTrue)
+
 				query = &es.Query{
 					Query: &es.QueryFilter{Bool: es.QFBool{Filter: es.Filter{
 						{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
@@ -305,6 +314,9 @@ func TestDB(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(retrieved.HitSet, ShouldNotBeNil)
 				So(len(retrieved.HitSet.Hits), ShouldEqual, 76800)
+
+				released = db.Done(query)
+				So(released, ShouldBeTrue)
 
 				query = &es.Query{
 					Query: &es.QueryFilter{Bool: es.QFBool{Filter: es.Filter{
@@ -336,6 +348,9 @@ func TestDB(t *testing.T) {
 
 				So(retrieved.HitSet.Hits[0].Details.UserName, ShouldNotBeBlank)
 				So(retrieved.HitSet.Hits[0].Details.AccountingName, ShouldBeBlank)
+
+				released = db.Done(query)
+				So(released, ShouldBeTrue)
 
 				usernames, err = db.Usernames(query)
 				So(err, ShouldBeNil)

@@ -29,7 +29,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/deneonet/benc"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
@@ -54,9 +53,7 @@ func TestDetails(t *testing.T) {
 			WastedMBSeconds:   7.2,
 		}
 
-		bufPool := benc.NewBufPool(benc.WithBufferSize(MaxEncodedDetailsLength))
-
-		detailBytes, err := details.Serialize(bufPool) //nolint:misspell
+		detailBytes, err := details.Serialize() //nolint:misspell
 		So(err, ShouldBeNil)
 		So(len(detailBytes), ShouldEqual, 127)
 
@@ -85,7 +82,7 @@ func TestDetails(t *testing.T) {
 			WastedMBSeconds:   7.2,
 		}
 
-		detailBytes, err = details.Serialize(bufPool) //nolint:misspell
+		detailBytes, err = details.Serialize() //nolint:misspell
 		So(err, ShouldBeNil)
 		So(len(detailBytes), ShouldEqual, 124)
 
@@ -181,7 +178,7 @@ func TestDetails(t *testing.T) {
 			WastedMBSeconds:   7.2,
 		}
 
-		detailBytes, err = details.Serialize(bufPool) //nolint:misspell
+		detailBytes, err = details.Serialize() //nolint:misspell
 		So(err, ShouldBeNil)
 		So(len(detailBytes), ShouldEqual, 7714)
 
