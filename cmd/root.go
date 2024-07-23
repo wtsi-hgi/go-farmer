@@ -80,6 +80,7 @@ farmer:
   file_size: 33554432
   buffer_size: 4194304
   cache_entries: 128
+  pool_size: 0
 
 Where file and buffer size are in bytes. file_size determines the desired size
 of local database files within database_dir, and buffer_size is the write and
@@ -88,6 +89,11 @@ are given in the example above (32MB and 4MB respectively).
 
 cache_entries is the number of query results that will be stored in an in-memory
 LRU cache. Defaults to 128.
+
+pool_size is the initial size of a buffer pool used for processing hit data
+stored on disk. If you set this higher than the expected number of hits in your
+largest query, you'll use a lot of memory, but the first time you run that query
+it will be fast.
 
 index will be the index supplied to the real elasticsearch when doing search and
 scroll queries.

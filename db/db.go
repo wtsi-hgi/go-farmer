@@ -85,6 +85,7 @@ type Config struct {
 	Directory       string
 	FileSize        int           // FileSize defaults to 32MB
 	BufferSize      int           // BufferSize defaults to 4MB
+	PoolSize        int           // PoolSize defaults to zero, but the higher you make this, the better first-time large queries will be
 	UpdateFrequency time.Duration // UpdateFrequency defaults to 1hr
 }
 
@@ -167,6 +168,11 @@ func New(config Config, checkBackfillSuccess bool) (*DB, error) {
 		err = db.loadAllFlatIndexes(db.dir)
 		if err == nil {
 			db.monitorFlatIndexes()
+
+			if config.PoolSize > 0 {
+				db.getFromBufPool(config.PoolSize, "warmup")
+				db.done("warmup")
+			}
 		}
 	} else {
 		err = os.MkdirAll(config.Directory, dbDirPerms)
@@ -612,17 +618,19 @@ func (d *DB) getFromBufPool(num int, key string) [][]byte {
 // memory. Returns true if there were slices associated with the given query,
 // false if it did nothing because there were not.
 func (d *DB) Done(query *es.Query) bool {
-	qkey := query.Key()
+	return d.done(query.Key())
+}
 
+func (d *DB) done(key string) bool {
 	d.muPool.Lock()
 	defer d.muPool.Unlock()
 
-	pqi, found := d.poolQueryToInUseIndexes[qkey]
+	pqi, found := d.poolQueryToInUseIndexes[key]
 	if !found {
 		return false
 	}
 
-	delete(d.poolQueryToInUseIndexes, qkey)
+	delete(d.poolQueryToInUseIndexes, key)
 
 	for _, i := range pqi {
 		d.poolInUse[i] = false

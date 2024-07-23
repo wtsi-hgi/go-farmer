@@ -50,12 +50,13 @@ type YAMLConfig struct {
 		Index    string
 	}
 	Farmer struct {
-		Host            string
-		Port            int
-		DatabaseDir     string `yaml:"database_dir"`
-		RawFileSize     int    `yaml:"file_size"`
-		RawBufferSize   int    `yaml:"buffer_size"`
-		RawCacheEntries int    `yaml:"cache_entries"`
+		Host         string
+		Port         int
+		DatabaseDir  string `yaml:"database_dir"`
+		FileSize     int    `yaml:"file_size"`
+		BufferSize   int    `yaml:"buffer_size"`
+		CacheEntries int    `yaml:"cache_entries"`
+		PoolSize     int    `yaml:"pool_size"`
 	}
 }
 
@@ -93,14 +94,15 @@ func (c *YAMLConfig) ToESConfig() es.Config {
 func (c *YAMLConfig) ToDBConfig() db.Config {
 	return db.Config{
 		Directory:  c.Farmer.DatabaseDir,
-		FileSize:   c.Farmer.RawFileSize,
-		BufferSize: c.Farmer.RawBufferSize,
+		FileSize:   c.Farmer.FileSize,
+		BufferSize: c.Farmer.BufferSize,
+		PoolSize:   c.Farmer.PoolSize,
 	}
 }
 
 func (c *YAMLConfig) CacheEntries() int {
-	if c.Farmer.RawCacheEntries > 0 {
-		return c.Farmer.RawCacheEntries
+	if c.Farmer.CacheEntries > 0 {
+		return c.Farmer.CacheEntries
 	}
 
 	return defaultCacheEntries
