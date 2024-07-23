@@ -49,10 +49,13 @@ type Searcher interface {
 }
 
 // Scroller types have a Scroll function for querying something like elastic
-// search, automatically getting all hits in a single scroll call. They also
-// have a Usernames function that returns just the usernames from the hits.
+// search, automatically getting all hits in a single scroll call. They have a
+// corresponding Done() function which takes the same Scroll query to release
+// any resources associated with doing the Scroll. They also have a Usernames
+// function that returns just the usernames from the hits.
 type Scroller interface {
 	Scroll(query *es.Query) (*es.Result, error)
+	Done(query *es.Query) bool
 	Usernames(query *es.Query) ([]string, error)
 }
 
@@ -209,6 +212,11 @@ func (c *CachedQuerier) scrollQuerier(query *es.Query) ([]byte, error) {
 	logQuery(t, len(result.HitSet.Hits), query, "scroll")
 
 	return resultToJSON(result, query)
+}
+
+// Done calls our Scroller.Done().
+func (c *CachedQuerier) Done(query *es.Query) bool {
+	return c.Scroller.Done(query)
 }
 
 // Usernames returns any cached slice for the given query, otherwise returns

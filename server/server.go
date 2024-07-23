@@ -46,6 +46,7 @@ const (
 type SearchScroller interface {
 	Search(query *es.Query) ([]byte, error)
 	Scroll(query *es.Query) ([]byte, error)
+	Done(query *es.Query) bool
 	Usernames(query *es.Query) ([]byte, error)
 }
 
@@ -111,7 +112,10 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jsonResult, ok := s.handleQuery(w, query)
+	jsonResult, deferFunc, ok := s.handleQuery(w, query)
+
+	defer deferFunc()
+
 	if !ok {
 		return
 	}
@@ -125,14 +129,19 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleQuery(w http.ResponseWriter, query *es.Query) ([]byte, bool) {
+func (s *Server) handleQuery(w http.ResponseWriter, query *es.Query) ([]byte, func(), bool) {
 	var (
 		jsonResult []byte
 		err        error
 	)
 
+	deferFunc := func() {}
+
 	if query.IsScroll() {
 		jsonResult, err = s.sc.Scroll(query)
+		deferFunc = func() {
+			s.sc.Done(query)
+		}
 	} else {
 		jsonResult, err = s.sc.Search(query)
 	}
@@ -141,10 +150,10 @@ func (s *Server) handleQuery(w http.ResponseWriter, query *es.Query) ([]byte, bo
 		w.WriteHeader(http.StatusInternalServerError)
 		sendMessageToClient(w, err.Error())
 
-		return nil, false
+		return nil, deferFunc, false
 	}
 
-	return jsonResult, true
+	return jsonResult, deferFunc, true
 }
 
 // fakeScroll handles unneeded requests to the /_search/scroll endpoint.

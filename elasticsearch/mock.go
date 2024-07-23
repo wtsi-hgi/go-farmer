@@ -261,6 +261,10 @@ func (m *Mock) ScrollQuery(args string) (*http.Request, int) {
 	return req, testScrollManyHitsNum
 }
 
+func (m *Mock) Done(*Query) bool {
+	return true
+}
+
 func (m *Mock) Usernames(query *Query) ([]string, error) {
 	r, err := m.Scroll(query)
 	if err != nil {

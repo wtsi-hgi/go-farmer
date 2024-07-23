@@ -83,6 +83,10 @@ func (m *mockSearchScroller) Scroll(query *es.Query) (*es.Result, error) {
 	return m.querier(query)
 }
 
+func (m *mockSearchScroller) Done(query *es.Query) bool {
+	return true
+}
+
 func (m *mockSearchScroller) Usernames(query *es.Query) ([]string, error) {
 	m.usernameCalls++
 
