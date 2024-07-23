@@ -572,14 +572,10 @@ func (d *DB) getFromBufPool(num int, key string) [][]byte {
 			continue
 		}
 
-		slice := *buf
-
 		d.poolInUse[i] = true
-		assignedBufs[assignedI] = slice
+		assignedBufs[assignedI] = *buf
 		assignedIndexes[assignedI] = i
 		assignedI++
-
-		*buf = slice
 
 		if assignedI == num {
 			break
