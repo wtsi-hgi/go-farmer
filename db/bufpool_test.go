@@ -35,41 +35,52 @@ func TestBufPool(t *testing.T) {
 	Convey("You can create new buffers in an empty pool", t, func() {
 		pool := newBufPool()
 
-		b := pool.get(10, "10")
+		b := pool.Get(10, "10")
 		So(len(b), ShouldEqual, 10)
 		So(len(pool.entries), ShouldEqual, 1)
 
-		b = pool.get(20, "20")
+		b = pool.Get(20, "20")
 		So(len(b), ShouldEqual, 20)
 		So(len(pool.entries), ShouldEqual, 2)
 
-		b = pool.get(15, "15")
+		b = pool.Get(15, "15")
 		So(len(b), ShouldEqual, 15)
 		So(len(pool.entries), ShouldEqual, 3)
 
-		b = pool.get(10, "10")
+		b = pool.Get(10, "10")
 		So(b, ShouldBeNil)
 		So(len(pool.entries), ShouldEqual, 3)
 
 		Convey("You can reuse done() buffers", func() {
-			ok := pool.done("notexist")
+			ok := pool.Done("notexist")
 			So(ok, ShouldBeFalse)
 
-			ok = pool.done("20")
+			ok = pool.Done("20")
 			So(ok, ShouldBeTrue)
 
-			ok = pool.done("15")
+			ok = pool.Done("15")
 			So(ok, ShouldBeTrue)
 
-			b = pool.get(14, "14")
+			b = pool.Get(14, "14")
 			So(len(b), ShouldEqual, 15)
 			So(len(pool.entries), ShouldEqual, 3)
 
-			ok = pool.done("10")
+			ok = pool.Done("10")
 			So(ok, ShouldBeTrue)
 
-			b = pool.get(10, "10")
+			b = pool.Get(10, "10")
 			So(len(b), ShouldEqual, 10)
+			So(len(pool.entries), ShouldEqual, 3)
+
+			b = pool.Get(20, "20")
+			So(len(b), ShouldEqual, 20)
+			So(len(pool.entries), ShouldEqual, 3)
+
+			ok = pool.Done("20")
+			So(ok, ShouldBeTrue)
+
+			b = pool.Get(20, "20")
+			So(len(b), ShouldEqual, 20)
 			So(len(pool.entries), ShouldEqual, 3)
 		})
 	})

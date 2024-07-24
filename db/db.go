@@ -167,7 +167,7 @@ func New(config Config, checkBackfillSuccess bool) (*DB, error) {
 		err = db.loadAllFlatIndexes(db.dir)
 		if err == nil {
 			db.monitorFlatIndexes()
-			db.bufPool.warmup(config.PoolSize)
+			db.bufPool.Warmup(config.PoolSize)
 		}
 	} else {
 		err = os.MkdirAll(config.Directory, dbDirPerms)
@@ -483,7 +483,7 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 		return result, nil
 	}
 
-	buf := d.bufPool.get(lenHits, query.Key())
+	buf := d.bufPool.Get(lenHits, query.Key())
 	hitI := 0
 	eg := errgroup.Group{}
 
@@ -570,7 +570,7 @@ func (d *DB) dateFolder(day time.Time) string {
 // memory. Returns true if there were slices associated with the given query,
 // false if it did nothing because there were not.
 func (d *DB) Done(query *es.Query) bool {
-	return d.bufPool.done(query.Key())
+	return d.bufPool.Done(query.Key())
 }
 
 // Usernames is like Scroll(), but picks out and returns only the unique

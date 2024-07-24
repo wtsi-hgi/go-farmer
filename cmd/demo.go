@@ -333,8 +333,7 @@ func initDB(client *es.Client, config db.Config, p int) error {
 }
 
 func timeSearch(msg string, cb func() ([]byte, error)) {
-	cliPrint("\n---------------------------\n")
-	cliPrint(msg + ":\n")
+	printTimingHeader(msg)
 
 	t := time.Now()
 
@@ -350,9 +349,17 @@ func timeSearch(msg string, cb func() ([]byte, error)) {
 		die("error decoding: %s", err)
 	}
 
+	printTimingFooter(result)
+}
+
+func printTimingHeader(msg string) {
+	cliPrint("\n---------------------------\n")
+	cliPrint(msg + ":\n")
+}
+
+func printTimingFooter(result *es.Result) {
 	printAggInfo(result)
 	printHitInfo(result)
-
 	cliPrint("---------------------------\n")
 }
 
@@ -396,8 +403,7 @@ func doDemoPprof(ldb *db.DB, query *es.Query) {
 
 	defer pprof.StopCPUProfile()
 
-	cliPrint("\n---------------------------\n")
-	cliPrint("non-agg query, large team (repeated with no cache, no JSON):\n")
+	printTimingHeader("non-agg query, large team (repeated with no cache, no JSON)")
 
 	t := time.Now()
 
@@ -407,16 +413,11 @@ func doDemoPprof(ldb *db.DB, query *es.Query) {
 	}
 
 	cliPrint("overall, search took: %s\n", time.Since(t))
-
-	printAggInfo(result)
-	printHitInfo(result)
-
-	cliPrint("---------------------------\n")
+	printTimingFooter(result)
 }
 
 func timeUsers(ldb *db.DB, query *es.Query) {
-	cliPrint("\n---------------------------\n")
-	cliPrint("users (pure index) query:\n")
+	printTimingHeader("users (pure index) query")
 
 	t := time.Now()
 
@@ -426,8 +427,6 @@ func timeUsers(ldb *db.DB, query *es.Query) {
 	}
 
 	cliPrint("overall, search took: %s\n", time.Since(t))
-
 	cliPrint("users: %s\n", usernames)
-
 	cliPrint("---------------------------\n")
 }

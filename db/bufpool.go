@@ -26,8 +26,7 @@
 package db
 
 import (
-	"cmp"
-	"slices"
+	"sort"
 	"strconv"
 	"sync"
 
@@ -39,21 +38,30 @@ const (
 )
 
 type poolEntry struct {
-	buf     *[]byte
-	len     int
-	inUseBy string
+	buf   *[]byte
+	len   int
+	index int
+	inUse bool
 }
 
+// bufPool holds a permanent pool of buffers of mixed size and is able to return
+// an existing unused one that is closest in size to a desired buffer size.
 type bufPool struct {
-	mu      sync.Mutex
-	entries []*poolEntry
+	mu         sync.Mutex
+	entries    []*poolEntry
+	keyToIndex map[string]int
 }
 
 func newBufPool() *bufPool {
-	return &bufPool{}
+	return &bufPool{
+		keyToIndex: map[string]int{},
+	}
 }
 
-func (b *bufPool) warmup(numHits int) {
+// Warmup populates the pool with buffers large enough to handle the given
+// number of hits, plus a sequence of smaller ones all the way down to one big
+// enough for 2 hits.
+func (b *bufPool) Warmup(numHits int) {
 	if numHits <= 0 {
 		return
 	}
@@ -63,74 +71,101 @@ func (b *bufPool) warmup(numHits int) {
 	for lengthNeeded > es.MaxEncodedDetailsLength {
 		key := strconv.Itoa(lengthNeeded)
 
-		b.get(lengthNeeded, key)
-		defer b.done(key)
+		b.Get(lengthNeeded, key)
+		defer b.Done(key)
 
 		hits := lengthNeeded / es.MaxEncodedDetailsLength
 		lengthNeeded = int(float64(hits)*bufPoolWarmupMuliplier) * es.MaxEncodedDetailsLength
 	}
 }
 
-func (b *bufPool) get(lengthNeeded int, key string) []byte {
+// Get returns the smallest buffer not in use from the pool that is at least
+// lengthNeeded long. If none exist, one of the given size is created in the
+// pool.
+//
+// The buf is associated with the given key, which you must then pass to Done()
+// when you have finished all reading and writing from the buf, to release it
+// back to the pool.
+func (b *bufPool) Get(lengthNeeded int, key string) []byte {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if b.keyInUse(key) {
+	if _, exists := b.keyToIndex[key]; exists {
 		return nil
 	}
 
-	var assignedBuf []byte
-
-	for _, pe := range b.entries {
-		if pe.inUseBy != "" || pe.len < lengthNeeded {
-			continue
-		}
-
-		pe.inUseBy = key
-		assignedBuf = *pe.buf
-
-		break
-	}
+	assignedBuf := b.getExisting(lengthNeeded, key)
 
 	if assignedBuf == nil {
-		buf := make([]byte, lengthNeeded)
-		assignedBuf = buf
-
-		b.entries = append(b.entries, &poolEntry{
-			buf:     &buf,
-			len:     lengthNeeded,
-			inUseBy: key,
-		})
-
-		slices.SortFunc[[]*poolEntry, *poolEntry](b.entries, func(a, b *poolEntry) int {
-			return cmp.Compare(a.len, b.len)
-		})
+		assignedBuf = b.makeNewBuf(lengthNeeded, key)
 	}
 
 	return assignedBuf
 }
 
-func (b *bufPool) keyInUse(key string) bool {
+func (b *bufPool) getExisting(lengthNeeded int, key string) []byte {
+	var assignedBuf []byte
+
 	for _, pe := range b.entries {
-		if pe.inUseBy == key {
-			return true
+		if pe.inUse || pe.len < lengthNeeded {
+			continue
+		}
+
+		pe.inUse = true
+		b.keyToIndex[key] = pe.index
+		assignedBuf = *pe.buf
+
+		break
+	}
+
+	return assignedBuf
+}
+
+func (b *bufPool) makeNewBuf(lengthNeeded int, key string) []byte {
+	buf := make([]byte, lengthNeeded)
+
+	b.insertSorted(&poolEntry{
+		buf:   &buf,
+		len:   lengthNeeded,
+		inUse: true,
+	}, key)
+
+	return buf
+}
+
+func (b *bufPool) insertSorted(pe *poolEntry, key string) {
+	i := sort.Search(len(b.entries), func(i int) bool { return b.entries[i].len > pe.len })
+	b.entries = append(b.entries, nil)
+	copy(b.entries[i+1:], b.entries[i:])
+	b.entries[i] = pe
+	pe.index = i
+
+	for j := i + 1; j < len(b.entries); j++ {
+		b.entries[j].index++
+	}
+
+	for key, index := range b.keyToIndex {
+		if index >= i {
+			b.keyToIndex[key]++
 		}
 	}
 
-	return false
+	b.keyToIndex[key] = i
 }
 
-func (b *bufPool) done(key string) bool {
+// Done releases the buffer you previously got from Get() with the same key.
+// Returns true if the key was known about and the buffer was released.
+func (b *bufPool) Done(key string) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	for _, pe := range b.entries {
-		if pe.inUseBy == key {
-			pe.inUseBy = ""
-
-			return true
-		}
+	index, found := b.keyToIndex[key]
+	if !found {
+		return false
 	}
 
-	return false
+	b.entries[index].inUse = false
+	delete(b.keyToIndex, key)
+
+	return true
 }
