@@ -73,6 +73,10 @@ acting as a transparent proxy. (Except for /_search/scroll queries, which return
 a fixed fake answer since we handle scrolls during search.)
 `,
 	Run: func(_ *cobra.Command, _ []string) {
+		if serverDebug {
+			slog.SetLogLoggerLevel(slog.LevelDebug)
+		}
+
 		config := ParseConfig()
 
 		client, err := es.NewClient(config.ToESConfig())
@@ -103,10 +107,6 @@ a fixed fake answer since we handle scrolls during search.)
 		}
 
 		server := server.New(cq, config.Elastic.Index, config.ElasticURL())
-
-		if serverDebug {
-			slog.SetLogLoggerLevel(slog.LevelDebug)
-		}
 
 		if serverPprof != "" {
 			fCPU, err := os.Create(serverPprof + ".cpu")

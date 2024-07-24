@@ -45,20 +45,17 @@ const (
 
 	dbDirPerms = 0770
 
-	timeStampWidth          = 8
-	bomWidth                = 34
-	accountingNameWidth     = 24
-	userNameWidth           = 13
-	gpuPrefix               = "gpu"
-	notInGPUQueue           = byte(1)
-	inGPUQueue              = byte(2)
-	lengthEncodeWidth       = 4
-	defaultFileSize         = 32 * 1024 * 1024
-	defaultBufferSize       = 4 * 1024 * 1024
-	defaultUpdateFrequency  = 1 * time.Hour
-	bufPoolMaxSizeMuliplier = 1.2
-	bufPoolWarmupMuliplier  = 0.8
-	bufPoolWarmupMinLength  = es.MaxEncodedDetailsLength * 10
+	timeStampWidth         = 8
+	bomWidth               = 34
+	accountingNameWidth    = 24
+	userNameWidth          = 13
+	gpuPrefix              = "gpu"
+	notInGPUQueue          = byte(1)
+	inGPUQueue             = byte(2)
+	lengthEncodeWidth      = 4
+	defaultFileSize        = 32 * 1024 * 1024
+	defaultBufferSize      = 4 * 1024 * 1024
+	defaultUpdateFrequency = 1 * time.Hour
 
 	oneDay = 24 * time.Hour
 
@@ -85,10 +82,13 @@ func (e Error) Error() string {
 // is the directory path you want to store the local database files, or where
 // they are already stored.
 type Config struct {
-	Directory       string
-	FileSize        int           // FileSize defaults to 32MB
-	BufferSize      int           // BufferSize defaults to 4MB
-	PoolSize        int           // PoolSize defaults to zero, but the higher you make this, the better first-time large queries will be
+	Directory  string
+	FileSize   int // FileSize defaults to 32MB
+	BufferSize int // BufferSize defaults to 4MB
+	// PoolSize defaults to zero, but the higher you make this, the better
+	// first-time large queries will be. Set it to the expected max number of
+	// hits your queries will return.
+	PoolSize        int
 	UpdateFrequency time.Duration // UpdateFrequency defaults to 1hr
 }
 
@@ -128,6 +128,7 @@ type DB struct {
 	dir                  string
 	fileSize             int
 	bufferSize           int
+	bufPool              *bufPool
 	updateFrequency      time.Duration
 	checkBackfillSuccess bool
 	latestDate           time.Time
@@ -135,11 +136,6 @@ type DB struct {
 
 	muDateBOMDirs sync.RWMutex
 	dateBOMDirs   map[string][]*flatIndex
-
-	muPool                sync.Mutex
-	bufPool               []*[]byte
-	poolInUse             []bool
-	poolQueryToInUseIndex map[string]int
 }
 
 // New returns a DB that will create or use the database files in the configured
@@ -157,13 +153,13 @@ type DB struct {
 // whole day database files.
 func New(config Config, checkBackfillSuccess bool) (*DB, error) {
 	db := &DB{
-		dir:                   config.Directory,
-		fileSize:              config.FileSizeOrDefault(),
-		bufferSize:            config.BufferSizeOrDefault(),
-		updateFrequency:       config.UpdateFrequencyOrDefault(),
-		checkBackfillSuccess:  checkBackfillSuccess,
-		dateBOMDirs:           make(map[string][]*flatIndex),
-		poolQueryToInUseIndex: make(map[string]int),
+		dir:                  config.Directory,
+		fileSize:             config.FileSizeOrDefault(),
+		bufferSize:           config.BufferSizeOrDefault(),
+		bufPool:              newBufPool(),
+		updateFrequency:      config.UpdateFrequencyOrDefault(),
+		checkBackfillSuccess: checkBackfillSuccess,
+		dateBOMDirs:          make(map[string][]*flatIndex),
 	}
 
 	_, err := os.Stat(config.Directory)
@@ -171,7 +167,7 @@ func New(config Config, checkBackfillSuccess bool) (*DB, error) {
 		err = db.loadAllFlatIndexes(db.dir)
 		if err == nil {
 			db.monitorFlatIndexes()
-			db.warmupPool(config.PoolSize)
+			db.bufPool.warmup(config.PoolSize)
 		}
 	} else {
 		err = os.MkdirAll(config.Directory, dbDirPerms)
@@ -290,21 +286,6 @@ func (d *DB) loadLatestFlatIndexes() {
 		if currentDay.After(maxDay) {
 			break
 		}
-	}
-}
-
-func (d *DB) warmupPool(numHits int) {
-	if numHits <= 0 {
-		return
-	}
-
-	lengthNeeded := numHits * es.MaxEncodedDetailsLength
-
-	for lengthNeeded > bufPoolWarmupMinLength {
-		d.getFromBufPool(lengthNeeded, "warmup")
-		d.done("warmup")
-
-		lengthNeeded = int(float64(lengthNeeded) * bufPoolWarmupMuliplier)
 	}
 }
 
@@ -485,6 +466,7 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 		}
 
 		numHits += len(entries)
+
 		allLDEs[fi.dataPath] = append(allLDEs[fi.dataPath], ldes...)
 	})
 
@@ -501,7 +483,7 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 		return result, nil
 	}
 
-	buf := d.getFromBufPool(lenHits, query.Key())
+	buf := d.bufPool.get(lenHits, query.Key())
 	hitI := 0
 	eg := errgroup.Group{}
 
@@ -521,7 +503,8 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 	return result, err
 }
 
-func (d *DB) getIndexEntriesHits(buf []byte, ldes []localDataEntry, fields es.Fields, hits []es.Hit, hitIndex int) error {
+func (d *DB) getIndexEntriesHits(buf []byte, ldes []localDataEntry, fields es.Fields,
+	hits []es.Hit, hitIndex int) error {
 	for _, lde := range ldes {
 		data := buf[lde.start : lde.start+lde.entry.length]
 
@@ -582,63 +565,12 @@ func (d *DB) dateFolder(day time.Time) string {
 	return fmt.Sprintf("%s/%s", d.dir, day.UTC().Format(dateFormat))
 }
 
-func (d *DB) getFromBufPool(lengthNeeded int, key string) []byte {
-	maxLength := int(float64(lengthNeeded) * bufPoolMaxSizeMuliplier)
-
-	d.muPool.Lock()
-	defer d.muPool.Unlock()
-
-	var (
-		assignedBuf   []byte
-		assignedIndex int
-	)
-
-	for i, buf := range d.bufPool {
-		if d.poolInUse[i] || len(*buf) < lengthNeeded || len(*buf) > maxLength {
-			continue
-		}
-
-		d.poolInUse[i] = true
-		assignedBuf = *buf
-		assignedIndex = i
-		break
-	}
-
-	if assignedBuf == nil {
-		buf := make([]byte, lengthNeeded)
-		d.bufPool = append(d.bufPool, &buf)
-		d.poolInUse = append(d.poolInUse, true)
-		assignedBuf = buf
-		assignedIndex = len(d.bufPool) - 1
-	}
-
-	d.poolQueryToInUseIndex[key] = assignedIndex
-
-	return assignedBuf
-}
-
 // Done must be called when you have finished using the Result returned by
 // Scroll(). It releases byte slices back to a pool so you don't run out of
 // memory. Returns true if there were slices associated with the given query,
 // false if it did nothing because there were not.
 func (d *DB) Done(query *es.Query) bool {
-	return d.done(query.Key())
-}
-
-func (d *DB) done(key string) bool {
-	d.muPool.Lock()
-	defer d.muPool.Unlock()
-
-	assignedIndex, found := d.poolQueryToInUseIndex[key]
-	if !found {
-		return false
-	}
-
-	delete(d.poolQueryToInUseIndex, key)
-
-	d.poolInUse[assignedIndex] = false
-
-	return true
+	return d.bufPool.done(query.Key())
 }
 
 // Usernames is like Scroll(), but picks out and returns only the unique
