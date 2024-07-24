@@ -45,17 +45,20 @@ const (
 
 	dbDirPerms = 0770
 
-	timeStampWidth         = 8
-	bomWidth               = 34
-	accountingNameWidth    = 24
-	userNameWidth          = 13
-	gpuPrefix              = "gpu"
-	notInGPUQueue          = byte(1)
-	inGPUQueue             = byte(2)
-	lengthEncodeWidth      = 4
-	defaultFileSize        = 32 * 1024 * 1024
-	defaultBufferSize      = 4 * 1024 * 1024
-	defaultUpdateFrequency = 1 * time.Hour
+	timeStampWidth          = 8
+	bomWidth                = 34
+	accountingNameWidth     = 24
+	userNameWidth           = 13
+	gpuPrefix               = "gpu"
+	notInGPUQueue           = byte(1)
+	inGPUQueue              = byte(2)
+	lengthEncodeWidth       = 4
+	defaultFileSize         = 32 * 1024 * 1024
+	defaultBufferSize       = 4 * 1024 * 1024
+	defaultUpdateFrequency  = 1 * time.Hour
+	bufPoolMaxSizeMuliplier = 1.2
+	bufPoolWarmupMuliplier  = 0.8
+	bufPoolWarmupMinLength  = es.MaxEncodedDetailsLength * 10
 
 	oneDay = 24 * time.Hour
 
@@ -133,10 +136,10 @@ type DB struct {
 	muDateBOMDirs sync.RWMutex
 	dateBOMDirs   map[string][]*flatIndex
 
-	muPool                  sync.Mutex
-	bufPool                 []*[]byte
-	poolInUse               []bool
-	poolQueryToInUseIndexes map[string][]int
+	muPool                sync.Mutex
+	bufPool               []*[]byte
+	poolInUse             []bool
+	poolQueryToInUseIndex map[string]int
 }
 
 // New returns a DB that will create or use the database files in the configured
@@ -154,13 +157,13 @@ type DB struct {
 // whole day database files.
 func New(config Config, checkBackfillSuccess bool) (*DB, error) {
 	db := &DB{
-		dir:                     config.Directory,
-		fileSize:                config.FileSizeOrDefault(),
-		bufferSize:              config.BufferSizeOrDefault(),
-		updateFrequency:         config.UpdateFrequencyOrDefault(),
-		checkBackfillSuccess:    checkBackfillSuccess,
-		dateBOMDirs:             make(map[string][]*flatIndex),
-		poolQueryToInUseIndexes: make(map[string][]int),
+		dir:                   config.Directory,
+		fileSize:              config.FileSizeOrDefault(),
+		bufferSize:            config.BufferSizeOrDefault(),
+		updateFrequency:       config.UpdateFrequencyOrDefault(),
+		checkBackfillSuccess:  checkBackfillSuccess,
+		dateBOMDirs:           make(map[string][]*flatIndex),
+		poolQueryToInUseIndex: make(map[string]int),
 	}
 
 	_, err := os.Stat(config.Directory)
@@ -168,11 +171,7 @@ func New(config Config, checkBackfillSuccess bool) (*DB, error) {
 		err = db.loadAllFlatIndexes(db.dir)
 		if err == nil {
 			db.monitorFlatIndexes()
-
-			if config.PoolSize > 0 {
-				db.getFromBufPool(config.PoolSize, "warmup")
-				db.done("warmup")
-			}
+			db.warmupPool(config.PoolSize)
 		}
 	} else {
 		err = os.MkdirAll(config.Directory, dbDirPerms)
@@ -291,6 +290,21 @@ func (d *DB) loadLatestFlatIndexes() {
 		if currentDay.After(maxDay) {
 			break
 		}
+	}
+}
+
+func (d *DB) warmupPool(numHits int) {
+	if numHits <= 0 {
+		return
+	}
+
+	lengthNeeded := numHits * es.MaxEncodedDetailsLength
+
+	for lengthNeeded > bufPoolWarmupMinLength {
+		d.getFromBufPool(lengthNeeded, "warmup")
+		d.done("warmup")
+
+		lengthNeeded = int(float64(lengthNeeded) * bufPoolWarmupMuliplier)
 	}
 }
 
@@ -425,7 +439,7 @@ func i64tob(v int64) []byte {
 type localDataEntry struct {
 	fi    *flatIndex
 	entry *flatIndexEntry
-	data  []byte
+	start int
 }
 
 // Scroll returns all the hits that pass certain match and prefix filter terms
@@ -445,10 +459,10 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 	var (
 		mu      sync.Mutex
 		numHits int
+		lenHits int
 	)
 
 	allLDEs := make(map[string][]localDataEntry)
-	qkey := query.Key()
 
 	d.operateOnRequestedDays(filter, func(fi *flatIndex) {
 		entries := fi.IndexSearch(filter)
@@ -457,18 +471,18 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 		}
 
 		ldes := make([]localDataEntry, len(entries))
-		bufs := d.getFromBufPool(len(entries), qkey)
+
+		mu.Lock()
+		defer mu.Unlock()
 
 		for i, entry := range entries {
 			ldes[i] = localDataEntry{
 				fi:    fi,
 				entry: entry,
-				data:  bufs[i][:entry.length],
+				start: lenHits,
 			}
+			lenHits += entry.length
 		}
-
-		mu.Lock()
-		defer mu.Unlock()
 
 		numHits += len(entries)
 		allLDEs[fi.dataPath] = append(allLDEs[fi.dataPath], ldes...)
@@ -487,6 +501,7 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 		return result, nil
 	}
 
+	buf := d.getFromBufPool(lenHits, query.Key())
 	hitI := 0
 	eg := errgroup.Group{}
 
@@ -495,7 +510,7 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 		theseLDEs := ldes
 
 		eg.Go(func() error {
-			return d.getIndexEntriesHits(theseLDEs, filter.desiredFields, hits, startingHitIndex)
+			return d.getIndexEntriesHits(buf, theseLDEs, filter.desiredFields, hits, startingHitIndex)
 		})
 
 		hitI += len(ldes)
@@ -506,14 +521,16 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 	return result, err
 }
 
-func (d *DB) getIndexEntriesHits(ldes []localDataEntry, fields es.Fields, hits []es.Hit, hitIndex int) error {
+func (d *DB) getIndexEntriesHits(buf []byte, ldes []localDataEntry, fields es.Fields, hits []es.Hit, hitIndex int) error {
 	for _, lde := range ldes {
-		err := lde.fi.getDataEntry(lde.data, lde.entry)
+		data := buf[lde.start : lde.start+lde.entry.length]
+
+		err := lde.fi.getDataEntry(data, lde.entry)
 		if err != nil {
 			return err
 		}
 
-		details, err := es.DeserializeDetails(lde.data, fields)
+		details, err := es.DeserializeDetails(data, fields)
 		if err != nil {
 			return err
 		}
@@ -565,52 +582,39 @@ func (d *DB) dateFolder(day time.Time) string {
 	return fmt.Sprintf("%s/%s", d.dir, day.UTC().Format(dateFormat))
 }
 
-func (d *DB) getFromBufPool(num int, key string) [][]byte {
+func (d *DB) getFromBufPool(lengthNeeded int, key string) []byte {
+	maxLength := int(float64(lengthNeeded) * bufPoolMaxSizeMuliplier)
+
 	d.muPool.Lock()
 	defer d.muPool.Unlock()
 
-	assignedBufs := make([][]byte, num)
-	assignedIndexes := make([]int, num)
-	assignedI := 0
+	var (
+		assignedBuf   []byte
+		assignedIndex int
+	)
 
 	for i, buf := range d.bufPool {
-		if d.poolInUse[i] {
+		if d.poolInUse[i] || len(*buf) < lengthNeeded || len(*buf) > maxLength {
 			continue
 		}
 
 		d.poolInUse[i] = true
-		assignedBufs[assignedI] = *buf
-		assignedIndexes[assignedI] = i
-		assignedI++
-
-		if assignedI == num {
-			break
-		}
+		assignedBuf = *buf
+		assignedIndex = i
+		break
 	}
 
-	stillNeeded := num - assignedI
-	poolI := len(d.bufPool) - 1
-
-	for range stillNeeded {
-		buf := make([]byte, es.MaxEncodedDetailsLength)
+	if assignedBuf == nil {
+		buf := make([]byte, lengthNeeded)
 		d.bufPool = append(d.bufPool, &buf)
 		d.poolInUse = append(d.poolInUse, true)
-		poolI++
-
-		assignedBufs[assignedI] = buf
-		assignedIndexes[assignedI] = poolI
-		assignedI++
+		assignedBuf = buf
+		assignedIndex = len(d.bufPool) - 1
 	}
 
-	pqi, existed := d.poolQueryToInUseIndexes[key]
-	if !existed {
-		d.poolQueryToInUseIndexes[key] = make([]int, 0)
-	}
+	d.poolQueryToInUseIndex[key] = assignedIndex
 
-	pqi = append(pqi, assignedIndexes...)
-	d.poolQueryToInUseIndexes[key] = pqi
-
-	return assignedBufs
+	return assignedBuf
 }
 
 // Done must be called when you have finished using the Result returned by
@@ -625,16 +629,14 @@ func (d *DB) done(key string) bool {
 	d.muPool.Lock()
 	defer d.muPool.Unlock()
 
-	pqi, found := d.poolQueryToInUseIndexes[key]
+	assignedIndex, found := d.poolQueryToInUseIndex[key]
 	if !found {
 		return false
 	}
 
-	delete(d.poolQueryToInUseIndexes, key)
+	delete(d.poolQueryToInUseIndex, key)
 
-	for _, i := range pqi {
-		d.poolInUse[i] = false
-	}
+	d.poolInUse[assignedIndex] = false
 
 	return true
 }
