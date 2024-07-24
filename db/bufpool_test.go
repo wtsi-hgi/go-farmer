@@ -29,59 +29,80 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
+	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
 )
 
 func TestBufPool(t *testing.T) {
 	Convey("You can create new buffers in an empty pool", t, func() {
 		pool := newBufPool()
 
-		b := pool.Get(10, "10")
+		b, key10 := pool.Get(10)
 		So(len(b), ShouldEqual, 10)
+		So(key10, ShouldNotEqual, 0)
 		So(len(pool.entries), ShouldEqual, 1)
 
-		b = pool.Get(20, "20")
+		b, key20 := pool.Get(20)
 		So(len(b), ShouldEqual, 20)
 		So(len(pool.entries), ShouldEqual, 2)
 
-		b = pool.Get(15, "15")
+		b, key15 := pool.Get(15)
 		So(len(b), ShouldEqual, 15)
 		So(len(pool.entries), ShouldEqual, 3)
 
-		b = pool.Get(10, "10")
-		So(b, ShouldBeNil)
-		So(len(pool.entries), ShouldEqual, 3)
+		b, key10b := pool.Get(10)
+		So(len(b), ShouldEqual, 10)
+		So(key10b, ShouldNotEqual, key10)
+		So(len(pool.entries), ShouldEqual, 4)
 
 		Convey("You can reuse done() buffers", func() {
-			ok := pool.Done("notexist")
+			ok := pool.Done(-1)
 			So(ok, ShouldBeFalse)
 
-			ok = pool.Done("20")
+			ok = pool.Done(key20)
 			So(ok, ShouldBeTrue)
 
-			ok = pool.Done("15")
+			ok = pool.Done(key15)
 			So(ok, ShouldBeTrue)
 
-			b = pool.Get(14, "14")
+			b, _ = pool.Get(14)
 			So(len(b), ShouldEqual, 15)
-			So(len(pool.entries), ShouldEqual, 3)
+			So(len(pool.entries), ShouldEqual, 4)
 
-			ok = pool.Done("10")
+			ok = pool.Done(key10)
 			So(ok, ShouldBeTrue)
 
-			b = pool.Get(10, "10")
+			b, _ = pool.Get(10)
 			So(len(b), ShouldEqual, 10)
-			So(len(pool.entries), ShouldEqual, 3)
+			So(len(pool.entries), ShouldEqual, 4)
 
-			b = pool.Get(20, "20")
+			b, key20b := pool.Get(20)
 			So(len(b), ShouldEqual, 20)
-			So(len(pool.entries), ShouldEqual, 3)
+			So(len(pool.entries), ShouldEqual, 4)
 
-			ok = pool.Done("20")
+			ok = pool.Done(key20b)
 			So(ok, ShouldBeTrue)
 
-			b = pool.Get(20, "20")
+			b, _ = pool.Get(20)
 			So(len(b), ShouldEqual, 20)
-			So(len(pool.entries), ShouldEqual, 3)
+			So(len(pool.entries), ShouldEqual, 4)
 		})
+	})
+
+	Convey("You can Warmup a pool", t, func() {
+		pool := newBufPool()
+		So(len(pool.entries), ShouldEqual, 0)
+
+		pool.Warmup(10)
+		So(len(pool.entries), ShouldEqual, 6)
+		So(pool.entries[0].len, ShouldEqual, es.MaxEncodedDetailsLength*2)
+		So(pool.entries[1].len, ShouldEqual, es.MaxEncodedDetailsLength*3)
+		So(pool.entries[2].len, ShouldEqual, es.MaxEncodedDetailsLength*4)
+		So(pool.entries[3].len, ShouldEqual, es.MaxEncodedDetailsLength*6)
+		So(pool.entries[4].len, ShouldEqual, es.MaxEncodedDetailsLength*8)
+		So(pool.entries[5].len, ShouldEqual, es.MaxEncodedDetailsLength*10)
+
+		for _, entry := range pool.entries {
+			So(entry.inUse, ShouldBeFalse)
+		}
 	})
 }

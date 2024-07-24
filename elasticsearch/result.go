@@ -68,6 +68,7 @@ type Result struct {
 	TimedOut     bool          `json:"timed_out"`
 	HitSet       *HitSet       `json:"hits"`
 	Aggregations *Aggregations `json:"aggregations,omitempty"`
+	PoolKey      int           `json:"-"`
 }
 
 // NewResult returns a Result with an empty HitSet in it, suitable for adding

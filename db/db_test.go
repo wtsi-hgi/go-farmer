@@ -30,6 +30,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"testing"
 	"time"
 
@@ -225,7 +226,7 @@ func TestDB(t *testing.T) {
 				_, err = db.Scroll(query)
 				So(err, ShouldNotBeNil)
 
-				released := db.Done(query)
+				released := db.Done(0)
 				So(released, ShouldBeFalse)
 
 				bomMatch := map[string]es.MapStringStringOrMap{"match_phrase": map[string]interface{}{"BOM": bomA}}
@@ -262,7 +263,7 @@ func TestDB(t *testing.T) {
 				So(lastHitIndex, ShouldNotEqual, -1)
 				So(retrieved.HitSet.Hits[lastHitIndex].Details, ShouldResemble, result.HitSet.Hits[expectedNumHits-1].Details)
 
-				released = db.Done(query)
+				released = db.Done(retrieved.PoolKey)
 				So(released, ShouldBeTrue)
 
 				usernames, err := db.Usernames(query)
@@ -292,7 +293,7 @@ func TestDB(t *testing.T) {
 				So(retrieved.HitSet, ShouldNotBeNil)
 				So(len(retrieved.HitSet.Hits), ShouldEqual, 8777)
 
-				released = db.Done(query)
+				released = db.Done(retrieved.PoolKey)
 				So(released, ShouldBeTrue)
 
 				query = &es.Query{
@@ -315,7 +316,7 @@ func TestDB(t *testing.T) {
 				So(retrieved.HitSet, ShouldNotBeNil)
 				So(len(retrieved.HitSet.Hits), ShouldEqual, 76800)
 
-				released = db.Done(query)
+				released = db.Done(retrieved.PoolKey)
 				So(released, ShouldBeTrue)
 
 				query = &es.Query{
@@ -349,12 +350,65 @@ func TestDB(t *testing.T) {
 				So(retrieved.HitSet.Hits[0].Details.UserName, ShouldNotBeBlank)
 				So(retrieved.HitSet.Hits[0].Details.AccountingName, ShouldBeBlank)
 
-				released = db.Done(query)
+				released = db.Done(retrieved.PoolKey)
 				So(released, ShouldBeTrue)
 
 				usernames, err = db.Usernames(query)
 				So(err, ShouldBeNil)
 				So(usernames, ShouldResemble, []string{"userA"})
+
+				Convey("Which works concurrently", func() {
+					numRoutines := 100
+					rCh := make(chan *es.Result)
+					eCh := make(chan error)
+
+					var wg sync.WaitGroup
+
+					wg.Add(numRoutines)
+
+					for range numRoutines {
+						go func() {
+							defer wg.Done()
+
+							r, e := db.Scroll(query)
+							rCh <- r
+							eCh <- e
+
+							db.Done(r.PoolKey)
+						}()
+					}
+
+					errors := 0
+
+					go func() {
+						for e := range eCh {
+							if e != nil {
+								errors++
+							}
+						}
+					}()
+
+					oks := 0
+					okDoneCh := make(chan bool)
+
+					go func() {
+						for r := range rCh {
+							if r != nil && r.HitSet.Total.Value == 2 {
+								oks++
+							}
+						}
+
+						close(okDoneCh)
+					}()
+
+					wg.Wait()
+					close(eCh)
+					close(rCh)
+					<-okDoneCh
+
+					So(errors, ShouldEqual, 0)
+					So(oks, ShouldEqual, numRoutines)
+				})
 			})
 
 			Convey("A DB's knowledge of available flat files updates over time", func() {

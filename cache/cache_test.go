@@ -83,7 +83,7 @@ func (m *mockSearchScroller) Scroll(query *es.Query) (*es.Result, error) {
 	return m.querier(query)
 }
 
-func (m *mockSearchScroller) Done(query *es.Query) bool {
+func (m *mockSearchScroller) Done(int) bool {
 	return true
 }
 
@@ -223,7 +223,7 @@ func TestCache(t *testing.T) {
 		Convey("You can get uncached, then cached Scroll results", func() {
 			So(ss.scrollCalls, ShouldEqual, 0)
 
-			data, err := cq.Scroll(query)
+			data, _, err := cq.Scroll(query)
 			So(err, ShouldBeNil)
 
 			results, err := Decode(data)
@@ -231,7 +231,7 @@ func TestCache(t *testing.T) {
 			So(results.HitSet.Total.Value, ShouldEqual, expectedTotal)
 			So(ss.scrollCalls, ShouldEqual, 1)
 
-			data, err = cq.Scroll(query)
+			data, _, err = cq.Scroll(query)
 			So(err, ShouldBeNil)
 
 			results, err = Decode(data)
@@ -271,7 +271,7 @@ func TestCache(t *testing.T) {
 			So(ss.scrollCalls, ShouldEqual, 0)
 			So(ss.searchCalls, ShouldEqual, 0)
 
-			rdata, err := cq.Scroll(query)
+			rdata, _, err := cq.Scroll(query)
 			So(err, ShouldBeNil)
 
 			results, err := Decode(rdata)
@@ -296,7 +296,7 @@ func TestCache(t *testing.T) {
 		})
 
 		Convey("You can get all fields, or just the ones you want", func() {
-			data, err := cq.Scroll(query)
+			data, _, err := cq.Scroll(query)
 			So(err, ShouldBeNil)
 
 			jsonStr := string(data)
@@ -322,7 +322,7 @@ func TestCache(t *testing.T) {
 			So(strings.Count(jsonStr, `,"WASTED_MB_SECONDS":0`), ShouldEqual, 5)
 
 			query.Source = []string{"MEM_REQUESTED_MB", "Job", "WASTED_MB_SECONDS"}
-			data, err = cq.Scroll(query)
+			data, _, err = cq.Scroll(query)
 			So(err, ShouldBeNil)
 
 			jsonStr = string(data)

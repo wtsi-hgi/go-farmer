@@ -50,16 +50,16 @@ type Searcher interface {
 
 // Scroller types have a Scroll function for querying something like elastic
 // search, automatically getting all hits in a single scroll call. They have a
-// corresponding Done() function which takes the same Scroll query to release
-// any resources associated with doing the Scroll. They also have a Usernames
+// corresponding Done() function which takes the Scroll result to release
+// any resources associated with doing that Scroll. They also have a Usernames
 // function that returns just the usernames from the hits.
 type Scroller interface {
 	Scroll(query *es.Query) (*es.Result, error)
-	Done(query *es.Query) bool
+	Done(key int) bool
 	Usernames(query *es.Query) ([]string, error)
 }
 
-type querier func(query *es.Query) ([]byte, error)
+type querier func(query *es.Query) ([]byte, int, error)
 
 // CachedQuerier is an LRU cache wrapper around a Searcher and a Scroller that
 // stores and returns their Results as JSON.
@@ -89,33 +89,35 @@ func New(searcher Searcher, scroller Scroller, cacheSize int) (*CachedQuerier, e
 // Search returns any cached data for the given query, otherwise returns the
 // JSON result of calling our Searcher.Search().
 func (c *CachedQuerier) Search(query *es.Query) ([]byte, error) {
-	return c.wrapWithCache(cacheKeyPrefixResults, query, c.searchQuerier)
+	jb, _, err := c.wrapWithCache(cacheKeyPrefixResults, query, c.searchQuerier)
+
+	return jb, err
 }
 
-func (c *CachedQuerier) wrapWithCache(keyPrefix string, query *es.Query, querier querier) ([]byte, error) {
+func (c *CachedQuerier) wrapWithCache(keyPrefix string, query *es.Query, querier querier) ([]byte, int, error) {
 	cacheKey := keyPrefix + query.Key()
 
 	jsonBytes, ok := c.lru.Get(cacheKey)
 	if ok {
-		return jsonBytes, nil
+		return jsonBytes, -1, nil
 	}
 
-	jsonBytes, err := querier(query)
+	jsonBytes, key, err := querier(query)
 	if err != nil {
-		return nil, err
+		return nil, key, err
 	}
 
 	c.lru.Add(cacheKey, jsonBytes)
 
-	return jsonBytes, nil
+	return jsonBytes, key, nil
 }
 
-func (c *CachedQuerier) searchQuerier(query *es.Query) ([]byte, error) {
+func (c *CachedQuerier) searchQuerier(query *es.Query) ([]byte, int, error) {
 	t := time.Now()
 
 	result, err := c.Searcher.Search(query)
 	if err != nil {
-		return nil, err
+		return nil, -1, err
 	}
 
 	items := 0
@@ -125,7 +127,9 @@ func (c *CachedQuerier) searchQuerier(query *es.Query) ([]byte, error) {
 
 	logQuery(t, items, query, "search")
 
-	return resultToJSON(result, query)
+	jb, err := resultToJSON(result, query)
+
+	return jb, -1, err
 }
 
 func logQuery(start time.Time, items int, query *es.Query, kind string) {
@@ -196,41 +200,46 @@ func resultToJSON(result *es.Result, query *es.Query) ([]byte, error) {
 }
 
 // Scroll returns any cached data for the given query, otherwise returns the
-// JSON result of calling our Scroller.Scroll().
-func (c *CachedQuerier) Scroll(query *es.Query) ([]byte, error) {
+// JSON result of calling our Scroller.Scroll(), along with the key it returns
+// for clearing up resources with Done(key).
+func (c *CachedQuerier) Scroll(query *es.Query) ([]byte, int, error) {
 	return c.wrapWithCache(cacheKeyPrefixResults, query, c.scrollQuerier)
 }
 
-func (c *CachedQuerier) scrollQuerier(query *es.Query) ([]byte, error) {
+func (c *CachedQuerier) scrollQuerier(query *es.Query) ([]byte, int, error) {
 	t := time.Now()
 
 	result, err := c.Scroller.Scroll(query)
 	if err != nil {
-		return nil, err
+		return nil, -1, err
 	}
 
 	logQuery(t, len(result.HitSet.Hits), query, "scroll")
 
-	return resultToJSON(result, query)
+	jb, err := resultToJSON(result, query)
+
+	return jb, result.PoolKey, err
 }
 
 // Done calls our Scroller.Done().
-func (c *CachedQuerier) Done(query *es.Query) bool {
-	return c.Scroller.Done(query)
+func (c *CachedQuerier) Done(key int) bool {
+	return c.Scroller.Done(key)
 }
 
 // Usernames returns any cached slice for the given query, otherwise returns
 // the slice from calling our Scroller.Usernames().
 func (c *CachedQuerier) Usernames(query *es.Query) ([]byte, error) {
-	return c.wrapWithCache(cacheKeyPrefixStrings, query, c.usernameQuerier)
+	jb, _, err := c.wrapWithCache(cacheKeyPrefixStrings, query, c.usernameQuerier)
+
+	return jb, err
 }
 
-func (c *CachedQuerier) usernameQuerier(query *es.Query) ([]byte, error) {
+func (c *CachedQuerier) usernameQuerier(query *es.Query) ([]byte, int, error) {
 	t := time.Now()
 
 	usernames, err := c.Scroller.Usernames(query)
 	if err != nil {
-		return nil, err
+		return nil, -1, err
 	}
 
 	logQuery(t, len(usernames), query, "usernames")
@@ -238,16 +247,16 @@ func (c *CachedQuerier) usernameQuerier(query *es.Query) ([]byte, error) {
 	return stringsToJSON(usernames)
 }
 
-func stringsToJSON(strs []string) ([]byte, error) {
+func stringsToJSON(strs []string) ([]byte, int, error) {
 	t := time.Now()
 	jsonBytes, err := json.Marshal(strs)
 	if err != nil {
-		return nil, err
+		return nil, -1, err
 	}
 
 	slog.Debug("json.Marshal of usernames", "took", time.Since(t))
 
-	return jsonBytes, err
+	return jsonBytes, -1, err
 }
 
 // Decode takes the output of CachedQuerier.Search() or Scroll() and turns it

@@ -201,12 +201,16 @@ func demo(config *YAMLConfig, period int) { //nolint:funlen,gocognit,gocyclo
 	}
 
 	if demoPprof == "" {
-		timeSearch("aggregation query", func() ([]byte, error) {
-			return cq.Search(bomQuery)
+		timeSearch("aggregation query", func() ([]byte, int, error) {
+			b, err := cq.Search(bomQuery)
+
+			return b, -1, err
 		})
 
-		timeSearch("aggregation query (cached)", func() ([]byte, error) {
-			return cq.Search(bomQuery)
+		timeSearch("aggregation query (cached)", func() ([]byte, int, error) {
+			b, err := cq.Search(bomQuery)
+
+			return b, -1, err
 		})
 	}
 
@@ -237,17 +241,17 @@ func demo(config *YAMLConfig, period int) { //nolint:funlen,gocognit,gocyclo
 		}}},
 	}
 
-	timeSearch("non-agg query, large team", func() ([]byte, error) {
+	poolKey := timeSearch("non-agg query, large team", func() ([]byte, int, error) {
 		return cq.Scroll(teamQuery)
 	})
 
 	if demoPprof != "" {
-		doDemoPprof(ldb, teamQuery)
+		doDemoPprof(ldb, teamQuery, poolKey)
 
 		return
 	}
 
-	timeSearch("non-agg query, large team (repeated with no cache)", func() ([]byte, error) {
+	timeSearch("non-agg query, large team (repeated with no cache)", func() ([]byte, int, error) {
 		cq2, err := cache.New(client, ldb, 1)
 		if err != nil {
 			die("failed to create a second LRU cache: %s", err)
@@ -256,7 +260,7 @@ func demo(config *YAMLConfig, period int) { //nolint:funlen,gocognit,gocyclo
 		return cq2.Scroll(teamQuery)
 	})
 
-	timeSearch("non-agg query, large team (cached)", func() ([]byte, error) {
+	timeSearch("non-agg query, large team (cached)", func() ([]byte, int, error) {
 		return cq.Scroll(teamQuery)
 	})
 
@@ -277,7 +281,7 @@ func demo(config *YAMLConfig, period int) { //nolint:funlen,gocognit,gocyclo
 		}}},
 	}
 
-	timeSearch("non-agg query, user", func() ([]byte, error) {
+	timeSearch("non-agg query, user", func() ([]byte, int, error) {
 		return cq.Scroll(userQuery)
 	})
 
@@ -299,7 +303,7 @@ func demo(config *YAMLConfig, period int) { //nolint:funlen,gocognit,gocyclo
 		}}},
 	}
 
-	timeSearch("non-agg query, gpu", func() ([]byte, error) {
+	timeSearch("non-agg query, gpu", func() ([]byte, int, error) {
 		return cq.Scroll(gpuQuery)
 	})
 
@@ -332,12 +336,12 @@ func initDB(client *es.Client, config db.Config, p int) error {
 	return db.Backfill(client, config, from, period)
 }
 
-func timeSearch(msg string, cb func() ([]byte, error)) {
+func timeSearch(msg string, cb func() ([]byte, int, error)) int {
 	printTimingHeader(msg)
 
 	t := time.Now()
 
-	data, err := cb()
+	data, poolKey, err := cb()
 	if err != nil {
 		die("error searching: %s", err)
 	}
@@ -350,6 +354,8 @@ func timeSearch(msg string, cb func() ([]byte, error)) {
 	}
 
 	printTimingFooter(result)
+
+	return poolKey
 }
 
 func printTimingHeader(msg string) {
@@ -387,9 +393,8 @@ func printHitInfo(result *es.Result) {
 	}
 }
 
-func doDemoPprof(ldb *db.DB, query *es.Query) {
-	ldb.Done(query)
-	defer ldb.Done(query)
+func doDemoPprof(ldb *db.DB, query *es.Query, poolKey int) {
+	ldb.Done(poolKey)
 
 	fCPU, err := os.Create(demoPprof + ".cpu")
 	if err != nil {
@@ -411,6 +416,8 @@ func doDemoPprof(ldb *db.DB, query *es.Query) {
 	if err != nil {
 		die("failed to scroll: %s", err)
 	}
+
+	defer ldb.Done(result.PoolKey)
 
 	cliPrint("overall, search took: %s\n", time.Since(t))
 	printTimingFooter(result)

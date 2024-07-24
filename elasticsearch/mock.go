@@ -261,7 +261,7 @@ func (m *Mock) ScrollQuery(args string) (*http.Request, int) {
 	return req, testScrollManyHitsNum
 }
 
-func (m *Mock) Done(*Query) bool {
+func (m *Mock) Done(int) bool {
 	return true
 }
 

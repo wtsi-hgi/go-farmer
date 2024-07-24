@@ -42,11 +42,11 @@ const (
 
 // SearchScroller types have Search and Scroll functions for querying something
 // like elastic search. The Scroll will automatically get all hits in a single
-// scroll call. They return compressed JSON of the results.
+// scroll call. They return JSON of the results.
 type SearchScroller interface {
 	Search(query *es.Query) ([]byte, error)
-	Scroll(query *es.Query) ([]byte, error)
-	Done(query *es.Query) bool
+	Scroll(query *es.Query) ([]byte, int, error)
+	Done(int) bool
 	Usernames(query *es.Query) ([]byte, error)
 }
 
@@ -132,15 +132,16 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleQuery(w http.ResponseWriter, query *es.Query) ([]byte, func(), bool) {
 	var (
 		jsonResult []byte
+		poolKey    int
 		err        error
 	)
 
 	deferFunc := func() {}
 
 	if query.IsScroll() {
-		jsonResult, err = s.sc.Scroll(query)
+		jsonResult, poolKey, err = s.sc.Scroll(query)
 		deferFunc = func() {
-			s.sc.Done(query)
+			s.sc.Done(poolKey)
 		}
 	} else {
 		jsonResult, err = s.sc.Search(query)

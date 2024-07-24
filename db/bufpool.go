@@ -27,7 +27,6 @@ package db
 
 import (
 	"sort"
-	"strconv"
 	"sync"
 
 	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
@@ -49,12 +48,13 @@ type poolEntry struct {
 type bufPool struct {
 	mu         sync.Mutex
 	entries    []*poolEntry
-	keyToIndex map[string]int
+	key        int
+	keyToIndex map[int]int
 }
 
 func newBufPool() *bufPool {
 	return &bufPool{
-		keyToIndex: map[string]int{},
+		keyToIndex: map[int]int{},
 	}
 }
 
@@ -69,9 +69,7 @@ func (b *bufPool) Warmup(numHits int) {
 	lengthNeeded := numHits * es.MaxEncodedDetailsLength
 
 	for lengthNeeded > es.MaxEncodedDetailsLength {
-		key := strconv.Itoa(lengthNeeded)
-
-		b.Get(lengthNeeded, key)
+		_, key := b.Get(lengthNeeded)
 		defer b.Done(key)
 
 		hits := lengthNeeded / es.MaxEncodedDetailsLength
@@ -83,15 +81,17 @@ func (b *bufPool) Warmup(numHits int) {
 // lengthNeeded long. If none exist, one of the given size is created in the
 // pool.
 //
-// The buf is associated with the given key, which you must then pass to Done()
-// when you have finished all reading and writing from the buf, to release it
-// back to the pool.
-func (b *bufPool) Get(lengthNeeded int, key string) []byte {
+// The buf is associated with the returned int key, which you must then pass to
+// Done() when you have finished all reading and writing from the buf, to
+// release it back to the pool.
+func (b *bufPool) Get(lengthNeeded int) ([]byte, int) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	key := b.newKey()
+
 	if _, exists := b.keyToIndex[key]; exists {
-		return nil
+		return nil, key
 	}
 
 	assignedBuf := b.getExisting(lengthNeeded, key)
@@ -100,10 +100,16 @@ func (b *bufPool) Get(lengthNeeded int, key string) []byte {
 		assignedBuf = b.makeNewBuf(lengthNeeded, key)
 	}
 
-	return assignedBuf
+	return assignedBuf, key
 }
 
-func (b *bufPool) getExisting(lengthNeeded int, key string) []byte {
+func (b *bufPool) newKey() int {
+	b.key++
+
+	return b.key
+}
+
+func (b *bufPool) getExisting(lengthNeeded int, key int) []byte {
 	var assignedBuf []byte
 
 	for _, pe := range b.entries {
@@ -121,7 +127,7 @@ func (b *bufPool) getExisting(lengthNeeded int, key string) []byte {
 	return assignedBuf
 }
 
-func (b *bufPool) makeNewBuf(lengthNeeded int, key string) []byte {
+func (b *bufPool) makeNewBuf(lengthNeeded int, key int) []byte {
 	buf := make([]byte, lengthNeeded)
 
 	b.insertSorted(&poolEntry{
@@ -133,7 +139,7 @@ func (b *bufPool) makeNewBuf(lengthNeeded int, key string) []byte {
 	return buf
 }
 
-func (b *bufPool) insertSorted(pe *poolEntry, key string) {
+func (b *bufPool) insertSorted(pe *poolEntry, key int) {
 	i := sort.Search(len(b.entries), func(i int) bool { return b.entries[i].len > pe.len })
 	b.entries = append(b.entries, nil)
 	copy(b.entries[i+1:], b.entries[i:])
@@ -153,9 +159,9 @@ func (b *bufPool) insertSorted(pe *poolEntry, key string) {
 	b.keyToIndex[key] = i
 }
 
-// Done releases the buffer you previously got from Get() with the same key.
-// Returns true if the key was known about and the buffer was released.
-func (b *bufPool) Done(key string) bool {
+// Done releases the buffer you previously got from Get() given the key you also
+// got. Returns true if the key was known about and the buffer was released.
+func (b *bufPool) Done(key int) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 

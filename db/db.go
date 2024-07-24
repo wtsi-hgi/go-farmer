@@ -430,7 +430,8 @@ type localDataEntry struct {
 // To avoid memory allocations and increase performance, the returned Result
 // Details are unsafely backed by a pool of byte slices. It is only safe to
 // release these to the pool once you are done with the Result. To avoid a
-// memory leak, you must signify when you are done by calling Done(query).
+// memory leak, you must signify when you are done by calling
+// Done(result.PoolKey).
 func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 	filter, err := newFlatFilter(query)
 	if err != nil {
@@ -483,7 +484,8 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 		return result, nil
 	}
 
-	buf := d.bufPool.Get(lenHits, query.Key())
+	buf, poolKey := d.bufPool.Get(lenHits)
+	result.PoolKey = poolKey
 	hitI := 0
 	eg := errgroup.Group{}
 
@@ -565,12 +567,12 @@ func (d *DB) dateFolder(day time.Time) string {
 	return fmt.Sprintf("%s/%s", d.dir, day.UTC().Format(dateFormat))
 }
 
-// Done must be called when you have finished using the Result returned by
-// Scroll(). It releases byte slices back to a pool so you don't run out of
-// memory. Returns true if there were slices associated with the given query,
+// Done must be called when you have finished using the Result.PoolKey returned
+// by Scroll(). It releases byte slices back to a pool so you don't run out of
+// memory. Returns true if there were slices associated with the given PoolKey,
 // false if it did nothing because there were not.
-func (d *DB) Done(query *es.Query) bool {
-	return d.bufPool.Done(query.Key())
+func (d *DB) Done(poolKey int) bool {
+	return d.bufPool.Done(poolKey)
 }
 
 // Usernames is like Scroll(), but picks out and returns only the unique
