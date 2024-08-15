@@ -152,15 +152,7 @@ type DB struct {
 // If you're using Backfill, then provide a true bool to only load successful
 // whole day database files.
 func New(config Config, checkBackfillSuccess bool) (*DB, error) {
-	db := &DB{
-		dir:                  config.Directory,
-		fileSize:             config.FileSizeOrDefault(),
-		bufferSize:           config.BufferSizeOrDefault(),
-		bufPool:              newBufPool(),
-		updateFrequency:      config.UpdateFrequencyOrDefault(),
-		checkBackfillSuccess: checkBackfillSuccess,
-		dateBOMDirs:          make(map[string][]*flatIndex),
-	}
+	db := newDBStruct(config, checkBackfillSuccess)
 
 	_, err := os.Stat(config.Directory)
 	if err == nil {
@@ -174,6 +166,18 @@ func New(config Config, checkBackfillSuccess bool) (*DB, error) {
 	}
 
 	return db, err
+}
+
+func newDBStruct(config Config, checkBackfillSuccess bool) *DB {
+	return &DB{
+		dir:                  config.Directory,
+		fileSize:             config.FileSizeOrDefault(),
+		bufferSize:           config.BufferSizeOrDefault(),
+		bufPool:              newBufPool(),
+		updateFrequency:      config.UpdateFrequencyOrDefault(),
+		checkBackfillSuccess: checkBackfillSuccess,
+		dateBOMDirs:          make(map[string][]*flatIndex),
+	}
 }
 
 func (d *DB) loadAllFlatIndexes(dir string) error {

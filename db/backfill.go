@@ -55,54 +55,38 @@ type Scroller interface {
 // If the configured database directory already has any results for a particular
 // day, that day will be skipped.
 func Backfill(client Scroller, config Config, from time.Time, period time.Duration) (err error) {
-	ldb, errn := New(config, true)
-	if errn != nil {
-		err = errn
-
-		return err
-	}
-
-	defer func() {
-		errc := ldb.Close()
-		if err == nil {
-			err = errc
-		}
-	}()
+	ldb := newDBStruct(config, true)
 
 	return backfillByDay(client, ldb, from, period)
 }
 
 func backfillByDay(client Scroller, ldb *DB, from time.Time, period time.Duration) error {
 	gte, lt := timeRange(from, period)
-
 	g, _ := errgroup.WithContext(context.Background())
 	g.SetLimit(maxSimultaneousBackfills)
 
 	for !gte.After(lt) {
-		from := gte
+		from, lt := timeRange(gte, oneDay)
+		gte = gte.Add(oneDay)
+
+		successPath, err := checkIfNeeded(ldb, from)
+		if err != nil {
+			return err
+		}
+
+		if successPath == "" {
+			continue
+		}
 
 		g.Go(func() error {
-			return queryElasticAndStoreLocally(client, ldb, from, oneDay)
+			return queryElasticAndStoreLocally(client, ldb, from, lt, successPath)
 		})
-
-		gte = gte.Add(oneDay)
 	}
 
 	return g.Wait()
 }
 
-func queryElasticAndStoreLocally(client Scroller, ldb *DB, from time.Time, period time.Duration) error {
-	gte, lt := timeRange(from, period)
-
-	successPath, err := checkIfNeeded(ldb, gte)
-	if err != nil {
-		return err
-	}
-
-	if successPath == "" {
-		return nil
-	}
-
+func queryElasticAndStoreLocally(client Scroller, ldb *DB, gte, lt time.Time, successPath string) error {
 	query := rangeQuery(gte, lt)
 
 	t := time.Now()
