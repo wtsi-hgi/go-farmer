@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"runtime"
 	"runtime/pprof"
 	"strconv"
 	"time"
@@ -144,6 +145,7 @@ func profileBackfillMem(prefix string) {
 			continue
 		}
 
+		runtime.GC()
 		pprof.WriteHeapProfile(fMem) //nolint:errcheck
 		fMem.Close()
 
