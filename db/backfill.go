@@ -46,7 +46,7 @@ const (
 // Scroller types have a Scroll function for querying something like elastic
 // search, automatically getting all hits in a single scroll call.
 type Scroller interface {
-	Scroll(query *es.Query) (*es.Result, error)
+	Scroll(query *es.Query, cb es.HitsCallBack) (*es.Result, error)
 }
 
 // Backfill uses the given client to request all hits from the end of the day
@@ -91,21 +91,30 @@ func queryElasticAndStoreLocally(client Scroller, ldb *DB, gte, lt time.Time, su
 
 	t := time.Now()
 
-	result, err := client.Scroll(query)
+	hitCh := make(chan *es.Hit)
+	errCh := make(chan error)
+
+	cb := func(hit *es.Hit) {
+		hitCh <- hit
+	}
+
+	go func() {
+		errCh <- ldb.Store(hitCh)
+	}()
+
+	_, err := client.Scroll(query, cb)
 	if err != nil {
 		return err
 	}
 
-	slog.Info("search successful", "took", time.Since(t), "gte", timestamp(gte), "lte", timestamp(lt))
+	close(hitCh)
 
-	t = time.Now()
-
-	err = ldb.Store(result)
+	err = <-errCh
 	if err != nil {
 		return err
 	}
 
-	slog.Info("store successful", "took", time.Since(t))
+	slog.Info("search&store successful", "took", time.Since(t), "gte", timestamp(gte), "lte", timestamp(lt))
 
 	return recordSuccess(successPath)
 }

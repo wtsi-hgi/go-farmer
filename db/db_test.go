@@ -80,7 +80,21 @@ func TestDB(t *testing.T) {
 			expectedNumHits := 172800
 			So(result.HitSet.Total.Value, ShouldEqual, expectedNumHits)
 
-			err = db.Store(result)
+			hitCh := make(chan *es.Hit)
+			errCh := make(chan error)
+
+			go func() {
+				errs := db.Store(hitCh)
+				errCh <- errs
+			}()
+
+			for _, hit := range result.HitSet.Hits {
+				hitCh <- &hit
+			}
+
+			close(hitCh)
+
+			err = <-errCh
 			So(err, ShouldBeNil)
 
 			err = db.Close()

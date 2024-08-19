@@ -48,6 +48,20 @@ func (m *mockRealServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("a real elasticsearch response")) //nolint:errcheck
 }
 
+type mockScroller struct {
+	*es.Mock
+}
+
+func newMockScroller(index string) *mockScroller {
+	mock := es.NewMock(index)
+
+	return &mockScroller{mock}
+}
+
+func (m *mockScroller) Scroll(query *es.Query) (*es.Result, error) {
+	return m.Mock.Scroll(query, nil)
+}
+
 func TestServer(t *testing.T) {
 	Convey("Given a server", t, func() {
 		urlStr := "http://host:1234/"
@@ -56,7 +70,7 @@ func TestServer(t *testing.T) {
 		mockReal := httptest.NewServer(&mockRealServer{})
 		defer mockReal.Close()
 
-		mock := es.NewMock(index)
+		mock := newMockScroller(index)
 		cq, err := cache.New(mock, mock, 1)
 		So(err, ShouldBeNil)
 

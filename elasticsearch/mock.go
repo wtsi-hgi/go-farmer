@@ -266,15 +266,15 @@ func (m *Mock) Done(int) bool {
 }
 
 func (m *Mock) Usernames(query *Query) ([]string, error) {
-	r, err := m.Scroll(query)
-	if err != nil {
-		return nil, err
-	}
-
 	usernamesMap := make(map[string]bool)
 
-	for _, hit := range r.HitSet.Hits {
+	cb := func(hit *Hit) {
 		usernamesMap[hit.Details.UserName] = true
+	}
+
+	_, err := m.Scroll(query, cb)
+	if err != nil {
+		return nil, err
 	}
 
 	usernames := make([]string, 0, len(usernamesMap))

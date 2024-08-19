@@ -97,12 +97,18 @@ func doClientTests(t *testing.T, config Config, expectedNumHits int) {
 			})
 
 			Convey("You can do a Scroll which always returns all hits", func() {
-				result, err := client.Scroll(query)
+				hitsReceieved := 0
+				cb := func(hit *Hit) {
+					hitsReceieved++
+				}
+
+				result, err := client.Scroll(query, cb)
 				So(err, ShouldBeNil)
 				So(client.Error, ShouldBeNil)
 				So(result, ShouldNotBeNil)
 				So(result.Aggregations, ShouldBeNil)
-				So(len(result.HitSet.Hits), ShouldEqual, expectedNumHits)
+				So(len(result.HitSet.Hits), ShouldEqual, 0)
+				So(hitsReceieved, ShouldEqual, expectedNumHits)
 				So(result.HitSet.Total.Value, ShouldEqual, expectedNumHits)
 			})
 
@@ -150,11 +156,17 @@ func doClientTests(t *testing.T, config Config, expectedNumHits int) {
 			So(err, ShouldBeNil)
 
 			Convey("You can do a Scroll which auto-scrolls", func() {
-				result, err := client.Scroll(query)
+				hitsReceieved := 0
+				cb := func(hit *Hit) {
+					hitsReceieved++
+				}
+
+				result, err := client.Scroll(query, cb)
 				So(err, ShouldBeNil)
 				So(result, ShouldNotBeNil)
 				So(result.Aggregations, ShouldBeNil)
-				So(len(result.HitSet.Hits), ShouldEqual, testScrollManyHitsNum)
+				So(len(result.HitSet.Hits), ShouldEqual, 0)
+				So(hitsReceieved, ShouldEqual, testScrollManyHitsNum)
 				So(result.HitSet.Total.Value, ShouldEqual, testScrollManyHitsNum)
 			})
 		})

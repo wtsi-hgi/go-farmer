@@ -97,7 +97,7 @@ func (c *Client) Info() (*ElasticInfo, error) {
 	return info, err
 }
 
-// Search uses out index and the given query to get back your desired search
+// Search uses our index and the given query to get back your desired search
 // results. If there are more than 10,000 hits, you won't get them (use Scroll
 // instead).
 func (c *Client) Search(query *Query) (*Result, error) {
@@ -114,12 +114,15 @@ func (c *Client) Search(query *Query) (*Result, error) {
 		return nil, err
 	}
 
-	return parseResultResponse(resp)
+	result, _, err := parseResultResponse(resp, nil)
+
+	return result, err
 }
 
-// Scroll uses out index and the given query to get back your desired search
-// results. It auto-scrolls and returns all your hits in one go.
-func (c *Client) Scroll(query *Query) (*Result, error) {
+// Scroll uses our index and the given query to get back your desired search
+// results. It auto-scrolls and returns all your hits via the given callback,
+// and everything else in the returned Result.
+func (c *Client) Scroll(query *Query, cb HitsCallBack) (*Result, error) {
 	qbody, err := query.asBody()
 	if err != nil {
 		return nil, err
@@ -135,14 +138,14 @@ func (c *Client) Scroll(query *Query) (*Result, error) {
 		return nil, err
 	}
 
-	result, err := parseResultResponse(resp)
+	result, n, err := parseResultResponse(resp, cb)
 	if err != nil {
 		return nil, err
 	}
 
 	defer c.scrollCleanup(result)
 
-	err = c.scrollUntilAllHitsReceived(result)
+	err = c.scrollUntilAllHitsReceived(result, n, cb)
 
 	return result, err
 }
@@ -170,34 +173,32 @@ func scrollIDBody(scrollID string) (*bytes.Buffer, error) {
 	return bytes.NewBuffer(scrollBytes), nil
 }
 
-func (c *Client) scrollUntilAllHitsReceived(result *Result) error {
+func (c *Client) scrollUntilAllHitsReceived(result *Result, previousNumHits int, cb HitsCallBack) error {
 	total := result.HitSet.Total.Value
 	if total <= MaxSize {
 		return nil
 	}
 
-	previousNumHits := len(result.HitSet.Hits)
-
-	for keepScrolling := true; keepScrolling; keepScrolling = len(result.HitSet.Hits) < total {
-		err := c.scroll(result)
+	for keepScrolling := true; keepScrolling; keepScrolling = previousNumHits < total {
+		n, err := c.scroll(result, cb)
 		if err != nil {
 			return err
 		}
 
-		if len(result.HitSet.Hits) == previousNumHits {
+		if n == 0 {
 			break
 		}
 
-		previousNumHits = len(result.HitSet.Hits)
+		previousNumHits += n
 	}
 
 	return nil
 }
 
-func (c *Client) scroll(result *Result) error {
+func (c *Client) scroll(result *Result, cb HitsCallBack) (int, error) {
 	scrollIDBody, err := scrollIDBody(result.ScrollID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	resp, err := c.client.Scroll(
@@ -205,16 +206,16 @@ func (c *Client) scroll(result *Result) error {
 		c.client.Scroll.WithScroll(scrollTime),
 	)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
-	scrollResult, err := parseResultResponse(resp)
+	scrollResult, n, err := parseResultResponse(resp, cb)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	result.HitSet.Hits = append(result.HitSet.Hits, scrollResult.HitSet.Hits...)
 	result.ScrollID = scrollResult.ScrollID
 
-	return nil
+	return n, nil
 }
