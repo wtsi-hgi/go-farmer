@@ -22,21 +22,35 @@ var (
 	_ easyjson.Marshaler
 )
 
+type HitsCallBack func(*Hit)
+
+// FromJSON is like UnmarshalJSON, but instead of storing all hits on the
+// Result which might need too much memory, it passes each Hit to the given
+// callback and only updates the Total count, but leaves Hits empty. Returns
+// the number of Hits passed to the callback.
+func (v *Result) FromJSON(data []byte, cb HitsCallBack) (int, error) {
+	r := jlexer.Lexer{Data: data}
+	n := easyjsonD3b49167DecodeGithubComWtsiHgiGoFarmerElasticsearch(&r, v, cb)
+	return n, r.Error()
+}
+
 // UnmarshalJSON supports json.Unmarshaler interface
 func (v *Result) UnmarshalJSON(data []byte) error {
 	r := jlexer.Lexer{Data: data}
-	easyjsonD3b49167DecodeGithubComWtsiHgiGoFarmerElasticsearch(&r, v)
+	easyjsonD3b49167DecodeGithubComWtsiHgiGoFarmerElasticsearch(&r, v, nil)
 	return r.Error()
 }
 
-func easyjsonD3b49167DecodeGithubComWtsiHgiGoFarmerElasticsearch(in *jlexer.Lexer, out *Result) {
+func easyjsonD3b49167DecodeGithubComWtsiHgiGoFarmerElasticsearch(in *jlexer.Lexer, out *Result, cb HitsCallBack) int {
+	var n int
+
 	isTopLevel := in.IsStart()
 	if in.IsNull() {
 		if isTopLevel {
 			in.Consumed()
 		}
 		in.Skip()
-		return
+		return 0
 	}
 	in.Delim('{')
 	for !in.IsDelim('}') {
@@ -62,7 +76,7 @@ func easyjsonD3b49167DecodeGithubComWtsiHgiGoFarmerElasticsearch(in *jlexer.Lexe
 				if out.HitSet == nil {
 					out.HitSet = new(HitSet)
 				}
-				(*out.HitSet).UnmarshalEasyJSON(in)
+				n = (*out.HitSet).FromJSON(in, cb)
 			}
 		case "aggregations":
 			if in.IsNull() {
@@ -83,11 +97,13 @@ func easyjsonD3b49167DecodeGithubComWtsiHgiGoFarmerElasticsearch(in *jlexer.Lexe
 	if isTopLevel {
 		in.Consumed()
 	}
+
+	return n
 }
 
 // UnmarshalEasyJSON supports easyjson.Unmarshaler interface
 func (v *Result) UnmarshalEasyJSON(l *jlexer.Lexer) {
-	easyjsonD3b49167DecodeGithubComWtsiHgiGoFarmerElasticsearch(l, v)
+	easyjsonD3b49167DecodeGithubComWtsiHgiGoFarmerElasticsearch(l, v, nil)
 }
 
 // UnmarshalJSON supports json.Unmarshaler interface
@@ -137,18 +153,20 @@ func (v *HitSetTotal) UnmarshalEasyJSON(l *jlexer.Lexer) {
 // UnmarshalJSON supports json.Unmarshaler interface
 func (v *HitSet) UnmarshalJSON(data []byte) error {
 	r := jlexer.Lexer{Data: data}
-	easyjsonD3b49167DecodeGithubComWtsiHgiGoFarmerElasticsearch2(&r, v)
+	easyjsonD3b49167DecodeGithubComWtsiHgiGoFarmerElasticsearch2(&r, v, nil)
 	return r.Error()
 }
 
-func easyjsonD3b49167DecodeGithubComWtsiHgiGoFarmerElasticsearch2(in *jlexer.Lexer, out *HitSet) {
+func easyjsonD3b49167DecodeGithubComWtsiHgiGoFarmerElasticsearch2(in *jlexer.Lexer, out *HitSet, cb HitsCallBack) int {
+	var n int
+
 	isTopLevel := in.IsStart()
 	if in.IsNull() {
 		if isTopLevel {
 			in.Consumed()
 		}
 		in.Skip()
-		return
+		return 0
 	}
 	in.Delim('{')
 	for !in.IsDelim('}') {
@@ -180,7 +198,14 @@ func easyjsonD3b49167DecodeGithubComWtsiHgiGoFarmerElasticsearch2(in *jlexer.Lex
 				for !in.IsDelim(']') {
 					var v1 Hit
 					(v1).UnmarshalEasyJSON(in)
-					out.Hits = append(out.Hits, v1)
+
+					if cb == nil {
+						out.Hits = append(out.Hits, v1)
+					} else {
+						cb(&v1)
+					}
+
+					n++
 					in.WantComma()
 				}
 				in.Delim(']')
@@ -194,11 +219,20 @@ func easyjsonD3b49167DecodeGithubComWtsiHgiGoFarmerElasticsearch2(in *jlexer.Lex
 	if isTopLevel {
 		in.Consumed()
 	}
+
+	return n
+}
+
+// FromJSON is like UnmarshalJSON, but instead of storing all hits on the
+// Result which might need too much memory, it passes each Hit to the given
+// callback and only updates the Total count, but leaves Hits empty.
+func (v *HitSet) FromJSON(l *jlexer.Lexer, cb HitsCallBack) int {
+	return easyjsonD3b49167DecodeGithubComWtsiHgiGoFarmerElasticsearch2(l, v, cb)
 }
 
 // UnmarshalEasyJSON supports easyjson.Unmarshaler interface
 func (v *HitSet) UnmarshalEasyJSON(l *jlexer.Lexer) {
-	easyjsonD3b49167DecodeGithubComWtsiHgiGoFarmerElasticsearch2(l, v)
+	easyjsonD3b49167DecodeGithubComWtsiHgiGoFarmerElasticsearch2(l, v, nil)
 }
 
 // UnmarshalJSON supports json.Unmarshaler interface

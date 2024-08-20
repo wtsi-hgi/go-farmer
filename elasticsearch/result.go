@@ -28,12 +28,12 @@ package elasticsearch
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 
 	"github.com/deneonet/benc"
 	"github.com/deneonet/benc/bstd"
 	"github.com/elastic/go-elasticsearch/v7/esapi"
-	easyjson "github.com/mailru/easyjson"
 )
 
 const (
@@ -466,18 +466,27 @@ type Buckets struct {
 	Buckets []interface{} `json:"buckets,omitempty"`
 }
 
-func parseResultResponse(resp *esapi.Response) (*Result, error) {
+// parseResultResponse parses the response in to a Result. If the given cb is
+// not nil, Hits are passed to the cb and not stored in the result and the total
+// number of Hits seen is returned as well.
+func parseResultResponse(resp *esapi.Response, cb HitsCallBack) (*Result, int, error) {
 	if resp.IsError() {
-		return nil, Error{Msg: ErrFailedQuery, cause: resp.String()}
+		return nil, 0, Error{Msg: ErrFailedQuery, cause: resp.String()}
 	}
 
 	defer resp.Body.Close()
 
-	var result Result
-
-	if err := easyjson.UnmarshalFromReader(resp.Body, &result); err != nil {
-		return nil, err
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, 0, err
 	}
 
-	return &result, nil
+	result := &Result{}
+
+	n, err := result.FromJSON(data, cb)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return result, n, nil
 }

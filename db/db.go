@@ -152,15 +152,7 @@ type DB struct {
 // If you're using Backfill, then provide a true bool to only load successful
 // whole day database files.
 func New(config Config, checkBackfillSuccess bool) (*DB, error) {
-	db := &DB{
-		dir:                  config.Directory,
-		fileSize:             config.FileSizeOrDefault(),
-		bufferSize:           config.BufferSizeOrDefault(),
-		bufPool:              newBufPool(),
-		updateFrequency:      config.UpdateFrequencyOrDefault(),
-		checkBackfillSuccess: checkBackfillSuccess,
-		dateBOMDirs:          make(map[string][]*flatIndex),
-	}
+	db := newDBStruct(config, checkBackfillSuccess)
 
 	_, err := os.Stat(config.Directory)
 	if err == nil {
@@ -174,6 +166,18 @@ func New(config Config, checkBackfillSuccess bool) (*DB, error) {
 	}
 
 	return db, err
+}
+
+func newDBStruct(config Config, checkBackfillSuccess bool) *DB {
+	return &DB{
+		dir:                  config.Directory,
+		fileSize:             config.FileSizeOrDefault(),
+		bufferSize:           config.BufferSizeOrDefault(),
+		bufPool:              newBufPool(),
+		updateFrequency:      config.UpdateFrequencyOrDefault(),
+		checkBackfillSuccess: checkBackfillSuccess,
+		dateBOMDirs:          make(map[string][]*flatIndex),
+	}
 }
 
 func (d *DB) loadAllFlatIndexes(dir string) error {
@@ -289,7 +293,7 @@ func (d *DB) loadLatestFlatIndexes() {
 	}
 }
 
-// Store stores the Details in the Hits of the given Result in flat database
+// Store stores the Details in the Hits from the channel in flat database
 // files in our directory, that can later be retrieved via Scroll().
 //
 // NB: What you Store() with this DB will not be available to Scroll(). You will
@@ -297,83 +301,40 @@ func (d *DB) loadLatestFlatIndexes() {
 //
 // NB: You can only call Store() concurrently if the result supplied to each
 // invocation is for a query of unique days.
-func (d *DB) Store(result *es.Result) error {
-	prevDay := ""
+func (d *DB) Store(hitCh chan *es.Hit) error {
+	var err error
 
+	prevDay := ""
 	flatDBs := make(map[string]*flatDB)
 
-	for _, hit := range result.HitSet.Hits {
-		group, user, isGPU, encodedDetails, err := d.getFixedWidthFields(hit)
+	for hit := range hitCh {
+		prevDay, err = d.storeHit(hit, flatDBs, prevDay)
 		if err != nil {
 			return err
 		}
-
-		day := timestampToDay(hit.Details.Timestamp)
-		if day != prevDay && prevDay != "" {
-			err = closeFlatDBs(flatDBs)
-			if err != nil {
-				return err
-			}
-		}
-
-		dayBom := filepath.Join(day, hit.Details.BOM)
-
-		fdb, err := d.getOrCreateFlatDB(flatDBs, dayBom)
-		if err != nil {
-			return err
-		}
-
-		if err = fdb.Store(
-			[][]byte{
-				i64tob(hit.Details.Timestamp),
-				group,
-				user,
-				{isGPU},
-			},
-			encodedDetails,
-		); err != nil {
-			return err
-		}
-
-		prevDay = day
 	}
 
 	return closeFlatDBs(flatDBs)
 }
 
-func (d *DB) getFixedWidthFields(hit es.Hit) ([]byte, []byte, byte, []byte, error) {
-	group, err := fixedWidthField(hit.Details.AccountingName, accountingNameWidth)
+func (d *DB) storeHit(hit *es.Hit, flatDBs map[string]*flatDB, prevDay string) (string, error) {
+	day := timestampToDay(hit.Details.Timestamp)
+	if day != prevDay && prevDay != "" {
+		if err := closeFlatDBs(flatDBs); err != nil {
+			return "", err
+		}
+	}
+
+	fdb, err := d.getOrCreateFlatDB(flatDBs, filepath.Join(day, hit.Details.BOM))
 	if err != nil {
-		return nil, nil, 0, nil, err
+		return "", err
 	}
 
-	user, err := fixedWidthField(hit.Details.UserName, userNameWidth)
-	if err != nil {
-		return nil, nil, 0, nil, err
+	if err = fdb.Store(hit); err != nil {
+		return "", err
 	}
 
-	isGPU := notInGPUQueue
-	if strings.HasPrefix(hit.Details.QueueName, gpuPrefix) {
-		isGPU = inGPUQueue
-	}
-
-	hit.Details.ID = hit.ID
-
-	encodedDetails, err := hit.Details.Serialize() //nolint:misspell
-	if err != nil {
-		return nil, nil, 0, nil, err
-	}
-
-	return group, user, isGPU, encodedDetails, nil
-}
-
-func fixedWidthField(str string, width int) ([]byte, error) {
-	padding := width - len(str)
-	if padding < 0 {
-		return nil, Error{Msg: ErrFieldTooLong, cause: fmt.Sprintf("'%s' is > %d characters", str, width)}
-	}
-
-	return []byte(str + strings.Repeat(" ", padding)), nil
+	return day, nil
 }
 
 func timestampToDay(timeStamp int64) string {

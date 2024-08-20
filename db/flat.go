@@ -33,6 +33,8 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
 )
 
 const (
@@ -96,22 +98,20 @@ func (f *flatDB) createFileAndWriter(kind string) (*os.File, *bufio.Writer, erro
 	return fh, w, nil
 }
 
-func (f *flatDB) Store(indexFields [][]byte, data []byte) error {
+func (f *flatDB) Store(hit *es.Hit) error {
+	group, user, isGPU, data, err := getFixedWidthFields(hit)
+	if err != nil {
+		return err
+	}
+
 	n, err := f.dataW.Write(data)
 	if err != nil {
 		return err
 	}
 
-	dataIndex := i32tob(int32(f.dataPos))
-	dataLen := i32tob(int32(len(data)))
-	indexFields = append(indexFields, dataIndex, dataLen)
-
-	for _, field := range indexFields {
-		_, err := f.indexW.Write(field)
-
-		if err != nil {
-			return err
-		}
+	err = f.storeIndex(hit.Details.Timestamp, group, user, isGPU, f.dataPos, len(data))
+	if err != nil {
+		return err
 	}
 
 	f.dataPos += n
@@ -122,6 +122,58 @@ func (f *flatDB) Store(indexFields [][]byte, data []byte) error {
 	}
 
 	return nil
+}
+
+func (f *flatDB) storeIndex(timestamp int64, group, user []byte, isGPU byte, dataIndex, dataLen int) error {
+	for _, field := range [][]byte{
+		i64tob(timestamp),
+		group,
+		user,
+		{isGPU},
+		i32tob(int32(dataIndex)),
+		i32tob(int32(dataLen)),
+	} {
+		if _, err := f.indexW.Write(field); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func getFixedWidthFields(hit *es.Hit) ([]byte, []byte, byte, []byte, error) {
+	group, err := fixedWidthField(hit.Details.AccountingName, accountingNameWidth)
+	if err != nil {
+		return nil, nil, 0, nil, err
+	}
+
+	user, err := fixedWidthField(hit.Details.UserName, userNameWidth)
+	if err != nil {
+		return nil, nil, 0, nil, err
+	}
+
+	isGPU := notInGPUQueue
+	if strings.HasPrefix(hit.Details.QueueName, gpuPrefix) {
+		isGPU = inGPUQueue
+	}
+
+	hit.Details.ID = hit.ID
+
+	encodedDetails, err := hit.Details.Serialize() //nolint:misspell
+	if err != nil {
+		return nil, nil, 0, nil, err
+	}
+
+	return group, user, isGPU, encodedDetails, nil
+}
+
+func fixedWidthField(str string, width int) ([]byte, error) {
+	padding := width - len(str)
+	if padding < 0 {
+		return nil, Error{Msg: ErrFieldTooLong, cause: fmt.Sprintf("'%s' is > %d characters", str, width)}
+	}
+
+	return []byte(str + strings.Repeat(" ", padding)), nil
 }
 
 // i32tob is like i64tob, but for int32s.

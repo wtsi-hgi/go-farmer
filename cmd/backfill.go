@@ -26,7 +26,11 @@
 package cmd
 
 import (
+	"fmt"
+	"os"
 	"regexp"
+	"runtime"
+	"runtime/pprof"
 	"strconv"
 	"time"
 
@@ -40,9 +44,12 @@ const (
 	hoursInWeek  = hoursInDay * 7
 	hoursInMonth = 730
 	hoursInYear  = 8760
+
+	profileFrequency = 10 * time.Second
 )
 
 var backfillPeriod string
+var backfillPprof string
 
 var backfillCmd = &cobra.Command{
 	Use:   "backfill",
@@ -72,6 +79,10 @@ to run it.
 			die("failed to create real elasticsearch client: %s", err)
 		}
 
+		if backfillPprof != "" {
+			go profileBackfillMem(backfillPprof)
+		}
+
 		t := time.Now()
 
 		err = db.Backfill(client, config.ToDBConfig(), t, period)
@@ -89,6 +100,8 @@ func init() {
 	// flags specific to this sub-command
 	backfillCmd.Flags().StringVarP(&backfillPeriod, "period", "p", "2m",
 		"period of time to pull hits for, eg. 1h for 1 hour, 2d for 2 day, 3w for 3 weeks, 4m for 4 months and 5y for 5 years") //nolint:lll
+	backfillCmd.Flags().StringVar(&backfillPprof, "pprof", "",
+		"output profiling data to files with the given prefix path")
 }
 
 func parsePeriod(periodStr string) time.Duration {
@@ -120,4 +133,22 @@ func parsePeriod(periodStr string) time.Duration {
 	}
 
 	return d
+}
+
+func profileBackfillMem(prefix string) {
+	ticker := time.NewTicker(profileFrequency)
+	i := 0
+
+	for range ticker.C {
+		fMem, err := os.Create(fmt.Sprintf("%s.%d", prefix, i))
+		if err != nil {
+			continue
+		}
+
+		runtime.GC()
+		pprof.WriteHeapProfile(fMem) //nolint:errcheck
+		fMem.Close()
+
+		i++
+	}
 }
