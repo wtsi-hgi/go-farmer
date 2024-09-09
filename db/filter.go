@@ -90,7 +90,7 @@ func (f *flatFilter) beyondLastDate(current time.Time) bool {
 func queryToFilters(query *es.Query) (bom, accountingName, userName string, checkGPU bool) {
 	filters := query.Filters()
 
-	bom = filters["BOM"]
+	bom = sanitiseBOMForFileSystem(filters["BOM"])
 	accountingName = filters["ACCOUNTING_NAME"]
 	userName = filters["USER_NAME"]
 

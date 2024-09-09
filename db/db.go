@@ -32,6 +32,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -62,6 +63,8 @@ const (
 	dateFormat      = "2006/01/02"
 	pretendScrollID = "farmer_scroll_id"
 )
+
+var nonASCIIRegexp = regexp.MustCompile("[[:^ascii:]]")
 
 // Error is an error type that has a Msg with one of our const Err* messages.
 type Error struct {
@@ -356,6 +359,8 @@ func closeFlatDBs(flatDBs map[string]*flatDB) error {
 func (d *DB) getOrCreateFlatDB(flatDBs map[string]*flatDB, dayBom string) (*flatDB, error) {
 	var err error
 
+	dayBom = sanitiseBOMForFileSystem(dayBom)
+
 	fdb, ok := flatDBs[dayBom]
 	if !ok {
 		fdb, err = newFlatDB(filepath.Join(d.dir, dayBom), d.fileSize, d.bufferSize)
@@ -367,6 +372,10 @@ func (d *DB) getOrCreateFlatDB(flatDBs map[string]*flatDB, dayBom string) (*flat
 	}
 
 	return fdb, nil
+}
+
+func sanitiseBOMForFileSystem(s string) string {
+	return nonASCIIRegexp.ReplaceAllLiteralString(s, "-")
 }
 
 // i64tob returns an 8-byte big endian representation of v. The result is a
