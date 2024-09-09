@@ -125,13 +125,15 @@ func TestDB(t *testing.T) {
 			dir = filepath.Join(dir, "04")
 			entries, err = os.ReadDir(dir)
 			So(err, ShouldBeNil)
-			So(len(entries), ShouldEqual, 2)
+			So(len(entries), ShouldEqual, 3)
 			So(entries[0].IsDir(), ShouldBeTrue)
 
 			bomA := "bomA"
 			So(entries[0].Name(), ShouldEqual, bomA)
 			So(entries[1].IsDir(), ShouldBeTrue)
 			So(entries[1].Name(), ShouldEqual, "bomB")
+			So(entries[2].IsDir(), ShouldBeTrue)
+			So(entries[2].Name(), ShouldEqual, "bomC-IDS")
 
 			dir = filepath.Join(dir, bomA)
 			entries, err = os.ReadDir(dir)
@@ -237,191 +239,212 @@ func TestDB(t *testing.T) {
 					}}},
 				}
 
-				_, err = db.Scroll(query)
-				So(err, ShouldNotBeNil)
+				Convey("if you specify a BoM", func() {
+					dbStore := db
+					db, err = New(config, false)
+					So(err, ShouldBeNil)
 
-				released := db.Done(0)
-				So(released, ShouldBeFalse)
+					_, err = db.Scroll(query)
+					So(err, ShouldNotBeNil)
 
-				bomMatch := map[string]es.MapStringStringOrMap{"match_phrase": map[string]interface{}{"BOM": bomA}}
-				query.Query.Bool.Filter = append(query.Query.Bool.Filter, bomMatch)
-				retrieved, err := db.Scroll(query)
-				So(err, ShouldBeNil)
-				So(len(retrieved.HitSet.Hits), ShouldEqual, 0)
+					released := db.Done(0)
+					So(released, ShouldBeFalse)
 
-				db, err = New(config, false)
-				So(err, ShouldBeNil)
+					bomMatch := map[string]es.MapStringStringOrMap{"match_phrase": map[string]interface{}{"BOM": bomA}}
+					query.Query.Bool.Filter = append(query.Query.Bool.Filter, bomMatch)
 
-				retrieved, err = db.Scroll(query)
-				So(err, ShouldBeNil)
-				So(retrieved.HitSet, ShouldNotBeNil)
-				So(retrieved.ScrollID, ShouldEqual, pretendScrollID)
+					Convey("unless you use the same db instance that did the store", func() {
+						retrieved, errs := dbStore.Scroll(query)
+						So(errs, ShouldBeNil)
+						So(len(retrieved.HitSet.Hits), ShouldEqual, 0)
+					})
 
-				expectedBomHits := expectedNumHits / 2
-				So(len(retrieved.HitSet.Hits), ShouldEqual, expectedBomHits)
+					retrieved, errs := db.Scroll(query)
+					So(errs, ShouldBeNil)
+					So(retrieved.HitSet, ShouldNotBeNil)
+					So(retrieved.ScrollID, ShouldEqual, pretendScrollID)
 
-				firstHitIndex := -1
-				lastHitIndex := -1
+					expectedBomHits := expectedNumHits/2 - 1
+					So(len(retrieved.HitSet.Hits), ShouldEqual, expectedBomHits)
 
-				for i, retrievedHit := range retrieved.HitSet.Hits {
-					switch retrievedHit.Details.Timestamp {
-					case result.HitSet.Hits[1].Details.Timestamp:
-						firstHitIndex = i
-					case result.HitSet.Hits[expectedNumHits-1].Details.Timestamp:
-						lastHitIndex = i
+					firstHitIndex := -1
+					lastHitIndex := -1
+
+					for i, retrievedHit := range retrieved.HitSet.Hits {
+						switch retrievedHit.Details.Timestamp {
+						case result.HitSet.Hits[1].Details.Timestamp:
+							firstHitIndex = i
+						case result.HitSet.Hits[expectedNumHits-1].Details.Timestamp:
+							lastHitIndex = i
+						}
 					}
-				}
 
-				So(firstHitIndex, ShouldNotEqual, -1)
-				So(retrieved.HitSet.Hits[firstHitIndex].Details, ShouldResemble, result.HitSet.Hits[1].Details)
-				So(lastHitIndex, ShouldNotEqual, -1)
-				So(retrieved.HitSet.Hits[lastHitIndex].Details, ShouldResemble, result.HitSet.Hits[expectedNumHits-1].Details)
+					So(firstHitIndex, ShouldNotEqual, -1)
+					So(retrieved.HitSet.Hits[firstHitIndex].Details, ShouldResemble, result.HitSet.Hits[1].Details)
+					So(lastHitIndex, ShouldNotEqual, -1)
+					So(retrieved.HitSet.Hits[lastHitIndex].Details, ShouldResemble, result.HitSet.Hits[expectedNumHits-1].Details)
 
-				released = db.Done(retrieved.PoolKey)
-				So(released, ShouldBeTrue)
+					released = db.Done(retrieved.PoolKey)
+					So(released, ShouldBeTrue)
 
-				usernames, err := db.Usernames(query)
-				So(err, ShouldBeNil)
+					usernames, erru := db.Usernames(query)
+					So(erru, ShouldBeNil)
 
-				sort.Strings(usernames)
-				So(usernames, ShouldResemble, []string{"userA", "userB"})
+					sort.Strings(usernames)
+					So(usernames, ShouldResemble, []string{"userA", "userB"})
 
-				aMatch := map[string]es.MapStringStringOrMap{"match_phrase": map[string]interface{}{"ACCOUNTING_NAME": "groupA"}}
-				query.Query.Bool.Filter = append(query.Query.Bool.Filter, aMatch)
-				retrieved, err = db.Scroll(query)
-				So(err, ShouldBeNil)
-				So(retrieved.HitSet, ShouldNotBeNil)
-				So(len(retrieved.HitSet.Hits), ShouldEqual, 69120)
+					aMatch := map[string]es.MapStringStringOrMap{"match_phrase": map[string]interface{}{"ACCOUNTING_NAME": "groupA"}}
+					query.Query.Bool.Filter = append(query.Query.Bool.Filter, aMatch)
+					retrieved, err = db.Scroll(query)
+					So(err, ShouldBeNil)
+					So(retrieved.HitSet, ShouldNotBeNil)
+					So(len(retrieved.HitSet.Hits), ShouldEqual, 69119)
 
-				uMatch := map[string]es.MapStringStringOrMap{"match_phrase": map[string]interface{}{"USER_NAME": "userA"}}
-				query.Query.Bool.Filter = append(query.Query.Bool.Filter, uMatch)
-				retrieved, err = db.Scroll(query)
-				So(err, ShouldBeNil)
-				So(retrieved.HitSet, ShouldNotBeNil)
-				So(len(retrieved.HitSet.Hits), ShouldEqual, 61440)
+					uMatch := map[string]es.MapStringStringOrMap{"match_phrase": map[string]interface{}{"USER_NAME": "userA"}}
+					query.Query.Bool.Filter = append(query.Query.Bool.Filter, uMatch)
+					retrieved, err = db.Scroll(query)
+					So(err, ShouldBeNil)
+					So(retrieved.HitSet, ShouldNotBeNil)
+					So(len(retrieved.HitSet.Hits), ShouldEqual, 61439)
 
-				qMatch := map[string]es.MapStringStringOrMap{"match_phrase": map[string]interface{}{"QUEUE_NAME": "gpu-any"}}
-				query.Query.Bool.Filter = append(query.Query.Bool.Filter, qMatch)
-				retrieved, err = db.Scroll(query)
-				So(err, ShouldBeNil)
-				So(retrieved.HitSet, ShouldNotBeNil)
-				So(len(retrieved.HitSet.Hits), ShouldEqual, 8777)
+					qMatch := map[string]es.MapStringStringOrMap{"match_phrase": map[string]interface{}{"QUEUE_NAME": "gpu-any"}}
+					query.Query.Bool.Filter = append(query.Query.Bool.Filter, qMatch)
+					retrieved, err = db.Scroll(query)
+					So(err, ShouldBeNil)
+					So(retrieved.HitSet, ShouldNotBeNil)
+					So(len(retrieved.HitSet.Hits), ShouldEqual, 8776)
 
-				released = db.Done(retrieved.PoolKey)
-				So(released, ShouldBeTrue)
+					released = db.Done(retrieved.PoolKey)
+					So(released, ShouldBeTrue)
 
-				query = &es.Query{
-					Query: &es.QueryFilter{Bool: es.QFBool{Filter: es.Filter{
-						{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
-						bomMatch,
-						uMatch,
-						{"range": map[string]interface{}{
-							"timestamp": map[string]string{
-								"lte":    lteStr,
-								"gte":    gteStr,
-								"format": "strict_date_optional_time",
-							},
-						}},
-					}}},
-				}
+					query = &es.Query{
+						Query: &es.QueryFilter{Bool: es.QFBool{Filter: es.Filter{
+							{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
+							bomMatch,
+							uMatch,
+							{"range": map[string]interface{}{
+								"timestamp": map[string]string{
+									"lte":    lteStr,
+									"gte":    gteStr,
+									"format": "strict_date_optional_time",
+								},
+							}},
+						}}},
+					}
 
-				retrieved, err = db.Scroll(query)
-				So(err, ShouldBeNil)
-				So(retrieved.HitSet, ShouldNotBeNil)
-				So(len(retrieved.HitSet.Hits), ShouldEqual, 76800)
+					retrieved, err = db.Scroll(query)
+					So(err, ShouldBeNil)
+					So(retrieved.HitSet, ShouldNotBeNil)
+					So(len(retrieved.HitSet.Hits), ShouldEqual, 76799)
 
-				released = db.Done(retrieved.PoolKey)
-				So(released, ShouldBeTrue)
+					released = db.Done(retrieved.PoolKey)
+					So(released, ShouldBeTrue)
 
-				query = &es.Query{
-					Query: &es.QueryFilter{Bool: es.QFBool{Filter: es.Filter{
-						{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
-						bomMatch,
-						{"range": map[string]interface{}{
-							"timestamp": map[string]string{
-								"lte":    "2024-02-05T00:00:04Z",
-								"gte":    "2024-02-05T00:00:00Z",
-								"format": "strict_date_optional_time",
-							},
-						}},
-					}}},
-					Source: []string{"USER_NAME", "timestamp"},
-				}
+					query = &es.Query{
+						Query: &es.QueryFilter{Bool: es.QFBool{Filter: es.Filter{
+							{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
+							bomMatch,
+							{"range": map[string]interface{}{
+								"timestamp": map[string]string{
+									"lte":    "2024-02-05T00:00:04Z",
+									"gte":    "2024-02-05T00:00:00Z",
+									"format": "strict_date_optional_time",
+								},
+							}},
+						}}},
+						Source: []string{"USER_NAME", "timestamp"},
+					}
 
-				retrieved, err = db.Scroll(query)
-				So(err, ShouldBeNil)
-				So(retrieved.HitSet, ShouldNotBeNil)
-				So(len(retrieved.HitSet.Hits), ShouldEqual, 2)
-				sort.Slice(retrieved.HitSet.Hits, func(i, j int) bool {
-					return retrieved.HitSet.Hits[i].Details.Timestamp < retrieved.HitSet.Hits[j].Details.Timestamp
+					retrieved, err = db.Scroll(query)
+					So(err, ShouldBeNil)
+					So(retrieved.HitSet, ShouldNotBeNil)
+					So(len(retrieved.HitSet.Hits), ShouldEqual, 2)
+					sort.Slice(retrieved.HitSet.Hits, func(i, j int) bool {
+						return retrieved.HitSet.Hits[i].Details.Timestamp < retrieved.HitSet.Hits[j].Details.Timestamp
+					})
+
+					stamp = time.Unix(retrieved.HitSet.Hits[0].Details.Timestamp, 0).UTC().Format(time.RFC3339)
+					So(stamp, ShouldEqual, "2024-02-05T00:00:01Z")
+
+					stamp = time.Unix(retrieved.HitSet.Hits[1].Details.Timestamp, 0).UTC().Format(time.RFC3339)
+
+					So(retrieved.HitSet.Hits[0].Details.UserName, ShouldNotBeBlank)
+					So(retrieved.HitSet.Hits[0].Details.AccountingName, ShouldBeBlank)
+
+					released = db.Done(retrieved.PoolKey)
+					So(released, ShouldBeTrue)
+
+					usernames, err = db.Usernames(query)
+					So(err, ShouldBeNil)
+					So(usernames, ShouldResemble, []string{"userA"})
+
+					Convey("Which works concurrently", func() {
+						numRoutines := 100
+						rCh := make(chan *es.Result)
+						eCh := make(chan error)
+
+						var wg sync.WaitGroup
+
+						wg.Add(numRoutines)
+
+						for range numRoutines {
+							go func() {
+								defer wg.Done()
+
+								r, e := db.Scroll(query)
+								rCh <- r
+								eCh <- e
+
+								db.Done(r.PoolKey)
+							}()
+						}
+
+						errors := 0
+
+						go func() {
+							for e := range eCh {
+								if e != nil {
+									errors++
+								}
+							}
+						}()
+
+						oks := 0
+						okDoneCh := make(chan bool)
+
+						go func() {
+							for r := range rCh {
+								if r != nil && r.HitSet.Total.Value == 2 {
+									oks++
+								}
+							}
+
+							close(okDoneCh)
+						}()
+
+						wg.Wait()
+						close(eCh)
+						close(rCh)
+						<-okDoneCh
+
+						So(errors, ShouldEqual, 0)
+						So(oks, ShouldEqual, numRoutines)
+					})
 				})
 
-				stamp = time.Unix(retrieved.HitSet.Hits[0].Details.Timestamp, 0).UTC().Format(time.RFC3339)
-				So(stamp, ShouldEqual, "2024-02-05T00:00:01Z")
+				Convey("if you specify a BoM with special characters in it", func() {
+					db, err = New(config, false)
+					So(err, ShouldBeNil)
 
-				stamp = time.Unix(retrieved.HitSet.Hits[1].Details.Timestamp, 0).UTC().Format(time.RFC3339)
+					bomMatch := map[string]es.MapStringStringOrMap{"match_phrase": map[string]interface{}{"BOM": "bomC–IDS"}}
+					query.Query.Bool.Filter = append(query.Query.Bool.Filter, bomMatch)
 
-				So(retrieved.HitSet.Hits[0].Details.UserName, ShouldNotBeBlank)
-				So(retrieved.HitSet.Hits[0].Details.AccountingName, ShouldBeBlank)
-
-				released = db.Done(retrieved.PoolKey)
-				So(released, ShouldBeTrue)
-
-				usernames, err = db.Usernames(query)
-				So(err, ShouldBeNil)
-				So(usernames, ShouldResemble, []string{"userA"})
-
-				Convey("Which works concurrently", func() {
-					numRoutines := 100
-					rCh := make(chan *es.Result)
-					eCh := make(chan error)
-
-					var wg sync.WaitGroup
-
-					wg.Add(numRoutines)
-
-					for range numRoutines {
-						go func() {
-							defer wg.Done()
-
-							r, e := db.Scroll(query)
-							rCh <- r
-							eCh <- e
-
-							db.Done(r.PoolKey)
-						}()
-					}
-
-					errors := 0
-
-					go func() {
-						for e := range eCh {
-							if e != nil {
-								errors++
-							}
-						}
-					}()
-
-					oks := 0
-					okDoneCh := make(chan bool)
-
-					go func() {
-						for r := range rCh {
-							if r != nil && r.HitSet.Total.Value == 2 {
-								oks++
-							}
-						}
-
-						close(okDoneCh)
-					}()
-
-					wg.Wait()
-					close(eCh)
-					close(rCh)
-					<-okDoneCh
-
-					So(errors, ShouldEqual, 0)
-					So(oks, ShouldEqual, numRoutines)
+					retrieved, errs := db.Scroll(query)
+					So(errs, ShouldBeNil)
+					So(retrieved.HitSet, ShouldNotBeNil)
+					So(retrieved.ScrollID, ShouldEqual, pretendScrollID)
+					So(len(retrieved.HitSet.Hits), ShouldEqual, 1)
+					So(retrieved.HitSet.Hits[0].Details.BOM, ShouldEqual, "bomC–IDS")
 				})
 			})
 
@@ -431,7 +454,7 @@ func TestDB(t *testing.T) {
 				So(err, ShouldBeNil)
 
 				db.muDateBOMDirs.RLock()
-				So(len(db.dateBOMDirs), ShouldEqual, 4)
+				So(len(db.dateBOMDirs), ShouldEqual, 5)
 				db.muDateBOMDirs.RUnlock()
 
 				febDir := filepath.Join(dbDir, "2024", "02")
@@ -447,7 +470,7 @@ func TestDB(t *testing.T) {
 				db.muDateBOMDirs.RLock()
 				defer db.muDateBOMDirs.RUnlock()
 
-				So(len(db.dateBOMDirs), ShouldEqual, 6)
+				So(len(db.dateBOMDirs), ShouldEqual, 7)
 
 				_, ok := db.dateBOMDirs[filepath.Dir(olderFile)]
 				So(ok, ShouldBeFalse)
@@ -495,6 +518,10 @@ func makeResult(gte, lte time.Time) *es.Result {
 
 		if hits%19 == 0 {
 			jName = ""
+		}
+
+		if hits == 7 {
+			bom = "bomC–IDS"
 		}
 
 		hit := es.Hit{
