@@ -88,26 +88,23 @@ func backfillByDay(client Scroller, ldb *DB, from time.Time, period time.Duratio
 
 func queryElasticAndStoreLocally(client Scroller, ldb *DB, gte, lt time.Time, successPath string) error {
 	query := rangeQuery(gte, lt)
-
 	t := time.Now()
-
 	hitCh := make(chan *es.Hit)
 	errCh := make(chan error)
-
 	cb := func(hit *es.Hit) {
 		hitCh <- hit
 	}
 
 	go func() {
-		errCh <- ldb.Store(hitCh)
+		_, err := client.Scroll(query, cb)
+		close(hitCh)
+		errCh <- err
 	}()
 
-	_, err := client.Scroll(query, cb)
+	err := ldb.Store(hitCh)
 	if err != nil {
 		return err
 	}
-
-	close(hitCh)
 
 	err = <-errCh
 	if err != nil {

@@ -147,7 +147,14 @@ func getFixedWidthFields(hit *es.Hit) ([]byte, []byte, byte, []byte, error) {
 		return nil, nil, 0, nil, err
 	}
 
-	user, err := fixedWidthField(hit.Details.UserName, userNameWidth)
+	username := hit.Details.UserName
+	// if len(username) > userNameWidth {
+	// 	slog.Warn("username too long, truncated", "name", username)
+
+	// 	username = username[:userNameWidth]
+	// }
+
+	user, err := fixedWidthField(username, userNameWidth)
 	if err != nil {
 		return nil, nil, 0, nil, err
 	}
