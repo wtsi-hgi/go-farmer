@@ -72,10 +72,10 @@ elastic:
   password: "public"
   scheme: "http"
   port: 19200
+  index: "elasticsearchindex-*"
 farmer:
   host: "localhost"
   port: 19201
-  index: "elasticsearchindex-*"
   database_dir: "/path/to/local/database_dir"
   file_size: 33554432
   buffer_size: 4194304

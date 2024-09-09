@@ -100,6 +100,25 @@ const (
 			]
 		}
 	}`
+	testNonAggQueryResponse0531LongGroup = `{
+		"hits": {
+			"total":{"value":4},
+			"hits": [
+				{"_id": "2", "_source": {
+					"BOM": "Human Genetics",
+					"ACCOUNTING_NAME": "long_long_long_long_long_long_long",
+					"USER_NAME": "u2",
+					"QUEUE_NAME": "q2",
+					"timestamp": 1717113600 } },
+				{"_id": "3", "_source": {
+					"BOM": "Human Genetics",
+					"ACCOUNTING_NAME": "long_long_long_long_long_long_long",
+					"USER_NAME": "u3",
+					"QUEUE_NAME": "q3",
+					"timestamp": 1717113600 } }
+			]
+		}
+	}`
 	testNonAggQueryResponseSizeSources = `{
 		"hits": {
 			"total":{"value":2},
@@ -120,7 +139,9 @@ const (
 
 var scrollHitsReturned = 0 //nolint:gochecknoglobals
 
-type mockTransport struct{}
+type mockTransport struct {
+	index string
+}
 
 func (m mockTransport) RoundTrip(req *http.Request) (*http.Response, error) { //nolint:funlen,gocognit,gocyclo,cyclop
 	jsonStr := mockVersionJSON
@@ -167,6 +188,11 @@ func (m mockTransport) RoundTrip(req *http.Request) (*http.Response, error) { //
 						jsonStr = testNonAggQueryResponse0530
 					case "2024-05-31T00:00:00Z":
 						jsonStr = testNonAggQueryResponse0531
+						if m.index == "long_group" {
+							jsonStr = testNonAggQueryResponse0531LongGroup
+						} else {
+							jsonStr = testNonAggQueryResponse0531
+						}
 					default:
 						jsonStr = testNonAggQueryResponseSize
 					}
@@ -236,7 +262,7 @@ func NewMock(index string) *Mock {
 		Scheme:    "http",
 		Port:      mockPort,
 		Index:     index,
-		transport: mockTransport{},
+		transport: mockTransport{index: index},
 	}
 
 	client, _ := NewClient(config) //nolint:errcheck
