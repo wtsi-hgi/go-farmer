@@ -505,13 +505,12 @@ func (d *DB) getIndexEntriesHits(buf []byte, ldes []localDataEntry, fields es.Fi
 
 func (d *DB) operateOnRequestedDays(filter *flatFilter, cb func(*flatIndex)) {
 	currentDay := filter.GTE
-	filterBOM := sanitiseBOMForFileSystem(filter.BOM)
 
 	var wg sync.WaitGroup
 
 	for {
 		d.muDateBOMDirs.RLock()
-		indexes := d.dateBOMDirs[filepath.Join(d.dateFolder(currentDay), filterBOM)]
+		indexes := d.dateBOMDirs[filepath.Join(d.dateFolder(currentDay), filter.BOM)]
 		d.muDateBOMDirs.RUnlock()
 
 		wg.Add(len(indexes))
