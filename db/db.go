@@ -549,20 +549,15 @@ func filterUnindexed(result *es.Result, query *es.Query) *es.Result {
 		return result
 	}
 
-	var hits []es.Hit
+	var hits []es.Hit //nolint:prealloc
 
-HITS:
 	for _, hit := range result.HitSet.Hits {
-		for k, v := range matchFilters {
-			if !nonIndexMatch(hit, k, v, strings.Contains) {
-				continue HITS
-			}
+		if !nonIndexMatch(matchFilters, hit, strings.Contains) {
+			continue
 		}
 
-		for k, v := range prefixFilters {
-			if !nonIndexMatch(hit, k, v, strings.HasPrefix) {
-				continue HITS
-			}
+		if !nonIndexMatch(prefixFilters, hit, strings.HasPrefix) {
+			continue
 		}
 
 		hits = append(hits, hit)
@@ -593,16 +588,18 @@ func nonIndexFilters(allFilters map[string]string) map[string]string {
 	return niFilters
 }
 
-func nonIndexMatch(hit es.Hit, k, v string, cmpFunc func(string, string) bool) bool {
-	switch k {
-	case "Command":
-		return cmpFunc(hit.Details.Command, v)
-	case "JOB_NAME":
-		return cmpFunc(hit.Details.JobName, v)
-	case "Job":
-		return cmpFunc(hit.Details.Job, v)
-	case "QUEUE_NAME":
-		return cmpFunc(hit.Details.QueueName, v)
+func nonIndexMatch(filters map[string]string, hit es.Hit, cmpFunc func(string, string) bool) bool {
+	for k, v := range filters {
+		switch k {
+		case "Command":
+			return cmpFunc(hit.Details.Command, v)
+		case "JOB_NAME":
+			return cmpFunc(hit.Details.JobName, v)
+		case "Job":
+			return cmpFunc(hit.Details.Job, v)
+		case "QUEUE_NAME":
+			return cmpFunc(hit.Details.QueueName, v)
+		}
 	}
 
 	// not currently handling non-string properties
