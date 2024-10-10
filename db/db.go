@@ -472,7 +472,7 @@ func (d *DB) Scroll(query *es.Query) (*es.Result, error) {
 
 	err = eg.Wait()
 
-	return result, err
+	return filterUnindexed(result, query), err
 }
 
 func (d *DB) getIndexEntriesHits(buf []byte, ldes []localDataEntry, fields es.Fields,
@@ -535,6 +535,88 @@ func (d *DB) operateOnRequestedDays(filter *flatFilter, cb func(*flatIndex)) {
 
 func (d *DB) dateFolder(day time.Time) string {
 	return fmt.Sprintf("%s/%s", d.dir, day.UTC().Format(dateFormat))
+}
+
+// filterUnindexed is used to apply filtering to hits in the result for cases
+// where the query contains match_phrase/prefix filters for properties we don't
+// index on, and were thus ignored up until now. If query only contains indexed
+// or unknown properties returns result unaltered.
+func filterUnindexed(result *es.Result, query *es.Query) *es.Result {
+	matchFilters := nonIndexFilters(query.MatchFilters())
+	prefixFilters := nonIndexFilters(query.PrefixFilters())
+
+	if len(matchFilters) == 0 && len(prefixFilters) == 0 {
+		return result
+	}
+
+	var hits []es.Hit
+
+HITS:
+	for _, hit := range result.HitSet.Hits {
+		for k, v := range matchFilters {
+			if !nonIndexMatch(hit, k, v, strings.Contains) {
+				continue HITS
+			}
+		}
+
+		for k, v := range prefixFilters {
+			if !nonIndexMatch(hit, k, v, strings.HasPrefix) {
+				continue HITS
+			}
+		}
+
+		hits = append(hits, hit)
+	}
+
+	result.HitSet.Total.Value = len(hits)
+	result.HitSet.Hits = hits
+
+	return result
+}
+
+func nonIndexFilters(allFilters map[string]string) map[string]string {
+	niFilters := make(map[string]string)
+
+	for k, v := range allFilters {
+		switch k {
+		case "BOM", "ACCOUNTING_NAME", "USER_NAME":
+			continue
+		case "QUEUE_NAME":
+			if v != gpuPrefix {
+				continue
+			}
+		}
+
+		niFilters[k] = v
+	}
+
+	return niFilters
+}
+
+func nonIndexMatch(hit es.Hit, k, v string, cmpFunc func(string, string) bool) bool {
+	switch k {
+	case "Command":
+		return cmpFunc(hit.Details.Command, v)
+	case "JOB_NAME":
+		return cmpFunc(hit.Details.JobName, v)
+	case "Job":
+		return cmpFunc(hit.Details.Job, v)
+	case "QUEUE_NAME":
+		return cmpFunc(hit.Details.QueueName, v)
+	}
+
+	// not currently handling non-string properties
+	// AvailCPUTimeSec   int64   `json:"AVAIL_CPU_TIME_SEC"`
+	// MemRequestedMB    int64   `json:"MEM_REQUESTED_MB"`
+	// MemRequestedMBSec int64   `json:"MEM_REQUESTED_MB_SEC"`
+	// NumExecProcs      int64   `json:"NUM_EXEC_PROCS"`
+	// PendingTimeSec    int64   `json:"PENDING_TIME_SEC"`
+	// RunTimeSec        int64   `json:"RUN_TIME_SEC"`
+	// Timestamp         int64   `json:"timestamp"`
+	// WastedCPUSeconds  float64 `json:"WASTED_CPU_SECONDS"`
+	// WastedMBSeconds   float64 `json:"WASTED_MB_SECONDS"`
+
+	return true
 }
 
 // Done must be called when you have finished using the Result.PoolKey returned

@@ -257,14 +257,25 @@ func (q *Query) DateRange() (lt, lte, gte time.Time, err error) { //nolint:gocog
 	return lt, lte, gte, Error{Msg: ErrNoTimestampRange}
 }
 
-// Filters returns the match_phrase and prefix key value pairs found in the
-// query's filter. Returns an empty map if none found.
+// Filters returns a combination of MatchFilters() and PrefixFilters().
 func (q *Query) Filters() map[string]string {
+	filters := q.MatchFilters()
+	filtersP := q.PrefixFilters()
+
+	for k, v := range filtersP {
+		filters[k] = v
+	}
+
+	return filters
+}
+
+// MatchFilters returns the match_phrase key value pairs found in the query's
+// filter. Returns an empty map if none found.
+func (q *Query) MatchFilters() map[string]string {
 	filters := make(map[string]string)
 
 	for _, val := range q.Query.Bool.Filter {
 		addKeyValsToFilters(val, "match_phrase", filters)
-		addKeyValsToFilters(val, "prefix", filters)
 	}
 
 	return filters
@@ -284,6 +295,18 @@ func addKeyValsToFilters(val map[string]MapStringStringOrMap, key string, filter
 
 		filters[key] = valStr
 	}
+}
+
+// PrefixFilters returns the prefix key value pairs found in the query's filter.
+// Returns an empty map if none found.
+func (q *Query) PrefixFilters() map[string]string {
+	filters := make(map[string]string)
+
+	for _, val := range q.Query.Bool.Filter {
+		addKeyValsToFilters(val, "prefix", filters)
+	}
+
+	return filters
 }
 
 type Fields uint16
