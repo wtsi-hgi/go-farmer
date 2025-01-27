@@ -168,7 +168,7 @@ func TestDB(t *testing.T) {
 			So(string(bIndex[nextFieldStart:nextFieldStart+accountingNameWidth]), ShouldEqual, "groupA                  ")
 
 			nextFieldStart += accountingNameWidth
-			So(string(bIndex[nextFieldStart:nextFieldStart+userNameWidth]), ShouldEqual, "userA        ")
+			So(string(bIndex[nextFieldStart:nextFieldStart+userNameWidth]), ShouldEqual, "userA          ")
 
 			nextFieldStart += userNameWidth
 			So(bIndex[nextFieldStart:nextFieldStart+1], ShouldEqual, []byte{notInGPUQueue})
@@ -291,7 +291,7 @@ func TestDB(t *testing.T) {
 					So(erru, ShouldBeNil)
 
 					sort.Strings(usernames)
-					So(usernames, ShouldResemble, []string{"userA", "userB"})
+					So(usernames, ShouldResemble, []string{"userA", "userB", "userNameTooLong"})
 
 					Convey("you can filter on things not in the index", func() {
 						jMatch := map[string]es.MapStringStringOrMap{"prefix": map[string]interface{}{"JOB_NAME": "nf"}}
@@ -345,7 +345,7 @@ func TestDB(t *testing.T) {
 						retrieved, err = db.Scroll(query)
 						So(err, ShouldBeNil)
 						So(retrieved.HitSet, ShouldNotBeNil)
-						So(len(retrieved.HitSet.Hits), ShouldEqual, 76799)
+						So(len(retrieved.HitSet.Hits), ShouldEqual, 76798)
 
 						released = db.Done(retrieved.PoolKey)
 						So(released, ShouldBeTrue)
@@ -462,22 +462,13 @@ func TestDB(t *testing.T) {
 					db, err = New(config, false)
 					So(err, ShouldBeNil)
 
-					longName := "data-cosmic-dev"
+					longName := "userNameTooLong"
 
-					query = &es.Query{
-						Query: &es.QueryFilter{Bool: es.QFBool{Filter: es.Filter{
-							{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
-							{"match_phrase": map[string]interface{}{"BOM": bomA}},
-							{"match_phrase": map[string]interface{}{"USER_NAME": longName}},
-							// {"range": map[string]interface{}{
-							// 	"timestamp": map[string]string{
-							// 		"lte":    lteStr,
-							// 		"gte":    gteStr,
-							// 		"format": "strict_date_optional_time",
-							// 	},
-							// }},
-						}}},
+					userMatch := []map[string]es.MapStringStringOrMap{
+						{"match_phrase": map[string]interface{}{"BOM": bomA}},
+						{"match_phrase": map[string]interface{}{"USER_NAME": longName}},
 					}
+					query.Query.Bool.Filter = append(query.Query.Bool.Filter, userMatch...)
 
 					retrieved, errs := db.Scroll(query)
 					So(errs, ShouldBeNil)
@@ -565,7 +556,7 @@ func makeResult(gte, lte time.Time) *es.Result {
 		}
 
 		if hits == 5 {
-			bom = "data-cosmic-dev"
+			uName = "userNameTooLong"
 		}
 
 		if hits == 7 {
