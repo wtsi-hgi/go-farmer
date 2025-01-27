@@ -457,6 +457,35 @@ func TestDB(t *testing.T) {
 					So(len(retrieved.HitSet.Hits), ShouldEqual, 1)
 					So(retrieved.HitSet.Hits[0].Details.BOM, ShouldEqual, "bomC–IDS")
 				})
+
+				Convey("if you specify a username that is 15 characters long", func() {
+					db, err = New(config, false)
+					So(err, ShouldBeNil)
+
+					longName := "data-cosmic-dev"
+
+					query = &es.Query{
+						Query: &es.QueryFilter{Bool: es.QFBool{Filter: es.Filter{
+							{"match_phrase": map[string]interface{}{"META_CLUSTER_NAME": "farm"}},
+							{"match_phrase": map[string]interface{}{"BOM": bomA}},
+							{"match_phrase": map[string]interface{}{"USER_NAME": longName}},
+							// {"range": map[string]interface{}{
+							// 	"timestamp": map[string]string{
+							// 		"lte":    lteStr,
+							// 		"gte":    gteStr,
+							// 		"format": "strict_date_optional_time",
+							// 	},
+							// }},
+						}}},
+					}
+
+					retrieved, errs := db.Scroll(query)
+					So(errs, ShouldBeNil)
+					So(retrieved.HitSet, ShouldNotBeNil)
+					So(retrieved.ScrollID, ShouldEqual, pretendScrollID)
+					So(len(retrieved.HitSet.Hits), ShouldEqual, 1)
+					So(retrieved.HitSet.Hits[0].Details.UserName, ShouldEqual, longName)
+				})
 			})
 
 			Convey("A DB's knowledge of available flat files updates over time", func() {
@@ -533,6 +562,10 @@ func makeResult(gte, lte time.Time) *es.Result {
 
 		if hits%21 == 0 {
 			jName = "nf-foo"
+		}
+
+		if hits == 5 {
+			bom = "data-cosmic-dev"
 		}
 
 		if hits == 7 {

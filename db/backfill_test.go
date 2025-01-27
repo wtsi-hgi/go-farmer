@@ -86,8 +86,6 @@ func TestBackfill(t *testing.T) {
 		So(err.Error(), ShouldStartWith, ErrFieldTooLong)
 	})
 
-	return
-
 	Convey("Given a mock elasticsearch client, db config and period, you can Backfill()", t, func() {
 		slog.SetLogLoggerLevel(slog.LevelWarn)
 
