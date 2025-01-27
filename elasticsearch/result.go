@@ -97,23 +97,25 @@ type Hit struct {
 
 // Details holds the document information of a Hit.
 type Details struct {
-	ID                string  `json:"_id"`
-	AccountingName    string  `json:"ACCOUNTING_NAME"`
-	AvailCPUTimeSec   int64   `json:"AVAIL_CPU_TIME_SEC"`
-	BOM               string  `json:"BOM"`
-	Command           string  `json:"Command"`
-	JobName           string  `json:"JOB_NAME"`
-	Job               string  `json:"Job"`
-	MemRequestedMB    int64   `json:"MEM_REQUESTED_MB"`
-	MemRequestedMBSec int64   `json:"MEM_REQUESTED_MB_SEC"`
-	NumExecProcs      int64   `json:"NUM_EXEC_PROCS"`
-	PendingTimeSec    int64   `json:"PENDING_TIME_SEC"`
-	QueueName         string  `json:"QUEUE_NAME"`
-	RunTimeSec        int64   `json:"RUN_TIME_SEC"`
-	Timestamp         int64   `json:"timestamp"`
-	UserName          string  `json:"USER_NAME"`
-	WastedCPUSeconds  float64 `json:"WASTED_CPU_SECONDS"`
-	WastedMBSeconds   float64 `json:"WASTED_MB_SECONDS"`
+	ID                  string  `json:"_id"`
+	AccountingName      string  `json:"ACCOUNTING_NAME"`
+	AvailCPUTimeSec     int64   `json:"AVAIL_CPU_TIME_SEC"`
+	BOM                 string  `json:"BOM"`
+	Command             string  `json:"Command"`
+	JobName             string  `json:"JOB_NAME"`
+	Job                 string  `json:"Job"`
+	MemRequestedMB      int64   `json:"MEM_REQUESTED_MB"`
+	MemRequestedMBSec   int64   `json:"MEM_REQUESTED_MB_SEC"`
+	NumExecProcs        int64   `json:"NUM_EXEC_PROCS"`
+	PendingTimeSec      int64   `json:"PENDING_TIME_SEC"`
+	QueueName           string  `json:"QUEUE_NAME"`
+	RunTimeSec          int64   `json:"RUN_TIME_SEC"`
+	Timestamp           int64   `json:"timestamp"`
+	UserName            string  `json:"USER_NAME"`
+	WastedCPUSeconds    float64 `json:"WASTED_CPU_SECONDS"`
+	WastedMBSeconds     float64 `json:"WASTED_MB_SECONDS"`
+	RawWastedCPUSeconds float64 `json:"RAW_WASTED_CPU_SECONDS"`
+	RawWastedMBSeconds  float64 `json:"RAW_WASTED_MB_SECONDS"`
 	// AVG_MEM_EFFICIENCY_PERCENT     float64
 	// AVRG_MEM_USAGE_MB              float64
 	// AVRG_MEM_USAGE_MB_SEC_COOKED   float64
@@ -139,8 +141,6 @@ type Details struct {
 	// RAW_AVG_MEM_EFFICIENCY_PERCENT float64
 	// RAW_CPU_TIME_SEC               float64
 	// RAW_MAX_MEM_EFFICIENCY_PERCENT float64
-	// RAW_WASTED_CPU_SECONDS         float64
-	// RAW_WASTED_MB_SECONDS          float64
 	// SUBMIT_TIME  int
 }
 
@@ -169,6 +169,8 @@ func (d *Details) Serialize() ([]byte, error) { //nolint:funlen,misspell
 	addSize(&size, &err, func() (int, error) { return bstd.SizeInt64(), nil })
 	addSize(&size, &err, func() (int, error) { return bstd.SizeInt64(), nil })
 	addSize(&size, &err, func() (int, error) { return bstd.SizeString(d.UserName) })
+	addSize(&size, &err, func() (int, error) { return bstd.SizeFloat64(), nil })
+	addSize(&size, &err, func() (int, error) { return bstd.SizeFloat64(), nil })
 	addSize(&size, &err, func() (int, error) { return bstd.SizeFloat64(), nil })
 	addSize(&size, &err, func() (int, error) { return bstd.SizeFloat64(), nil })
 
@@ -243,6 +245,8 @@ func (d *Details) marshal(size int) ([]byte, error) { //nolint:funlen,gocyclo
 
 	n = bstd.MarshalFloat64(n, encoded, d.WastedCPUSeconds)
 	n = bstd.MarshalFloat64(n, encoded, d.WastedMBSeconds)
+	n = bstd.MarshalFloat64(n, encoded, d.RawWastedCPUSeconds)
+	n = bstd.MarshalFloat64(n, encoded, d.RawWastedMBSeconds)
 
 	err = benc.VerifyMarshal(n, encoded)
 
@@ -439,6 +443,22 @@ func DeserializeDetails(encoded []byte, desired Fields) (*Details, error) { //no
 
 	if WantsField(desired, FieldWastedMBSeconds) {
 		n, details.WastedMBSeconds, err = bstd.UnmarshalFloat64(n, encoded)
+	} else {
+		n, err = bstd.SkipFloat64(n, encoded)
+	}
+
+	if WantsField(desired, FieldRawWastedCPUSeconds) {
+		n, details.RawWastedCPUSeconds, err = bstd.UnmarshalFloat64(n, encoded)
+	} else {
+		n, err = bstd.SkipFloat64(n, encoded)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	if WantsField(desired, FieldRawWastedMBSeconds) {
+		n, details.RawWastedMBSeconds, err = bstd.UnmarshalFloat64(n, encoded)
 	} else {
 		n, err = bstd.SkipFloat64(n, encoded)
 	}

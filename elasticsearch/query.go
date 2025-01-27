@@ -309,7 +309,7 @@ func (q *Query) PrefixFilters() map[string]string {
 	return filters
 }
 
-type Fields uint16
+type Fields uint32
 
 const (
 	FieldAccountingName Fields = 1 << iota
@@ -328,6 +328,8 @@ const (
 	FieldUserName
 	FieldWastedCPUSeconds
 	FieldWastedMBSeconds
+	FieldRawWastedCPUSeconds
+	FieldRawWastedMBSeconds
 )
 
 // DesiredFields returns a Fields bitmask value with all our Source values set.
@@ -373,6 +375,10 @@ func (q *Query) DesiredFields() Fields { //nolint:funlen,gocyclo,cyclop
 			f |= FieldWastedCPUSeconds
 		case "WASTED_MB_SECONDS":
 			f |= FieldWastedMBSeconds
+		case "RAW_WASTED_CPU_SECONDS":
+			f |= FieldRawWastedCPUSeconds
+		case "RAW_WASTED_MB_SECONDS":
+			f |= FieldRawWastedMBSeconds
 		}
 	}
 

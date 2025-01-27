@@ -349,6 +349,10 @@ func easyjsonD3b49167DecodeGithubComWtsiHgiGoFarmerElasticsearch5(in *jlexer.Lex
 			out.WastedCPUSeconds = float64(in.Float64())
 		case "WASTED_MB_SECONDS":
 			out.WastedMBSeconds = float64(in.Float64())
+		case "RAW_WASTED_CPU_SECONDS":
+			out.RawWastedCPUSeconds = float64(in.Float64())
+		case "RAW_WASTED_MB_SECONDS":
+			out.RawWastedMBSeconds = float64(in.Float64())
 		default:
 			in.SkipRecursive()
 		}

@@ -318,6 +318,28 @@ func (v Details) MarshalEasyJSON(w *jwriter.Writer, desired Fields) {
 		w.Float64(float64(v.WastedMBSeconds))
 	}
 
+	if WantsField(desired, FieldRawWastedCPUSeconds) {
+		const prefix string = ",\"RAW_WASTED_CPU_SECONDS\":"
+		if first {
+			first = false
+			w.RawString(prefix[1:])
+		} else {
+			w.RawString(prefix)
+		}
+		w.Float64(float64(v.RawWastedCPUSeconds))
+	}
+
+	if WantsField(desired, FieldRawWastedMBSeconds) {
+		const prefix string = ",\"RAW_WASTED_MB_SECONDS\":"
+		if first {
+			first = false
+			w.RawString(prefix[1:])
+		} else {
+			w.RawString(prefix)
+		}
+		w.Float64(float64(v.RawWastedMBSeconds))
+	}
+
 	w.RawByte('}')
 }
 

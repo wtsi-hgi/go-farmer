@@ -35,27 +35,29 @@ import (
 func TestDetails(t *testing.T) {
 	Convey("You can serialize and deserialze Details ", t, func() { //nolint:misspell
 		details := &Details{
-			AccountingName:    "aname",
-			AvailCPUTimeSec:   0,
-			BOM:               "bname",
-			Command:           "cmd",
-			JobName:           "jname",
-			Job:               "job",
-			MemRequestedMB:    1,
-			MemRequestedMBSec: 2,
-			NumExecProcs:      3,
-			PendingTimeSec:    4,
-			QueueName:         "qname",
-			RunTimeSec:        5,
-			Timestamp:         6,
-			UserName:          "uname",
-			WastedCPUSeconds:  7.1,
-			WastedMBSeconds:   7.2,
+			AccountingName:      "aname",
+			AvailCPUTimeSec:     0,
+			BOM:                 "bname",
+			Command:             "cmd",
+			JobName:             "jname",
+			Job:                 "job",
+			MemRequestedMB:      1,
+			MemRequestedMBSec:   2,
+			NumExecProcs:        3,
+			PendingTimeSec:      4,
+			QueueName:           "qname",
+			RunTimeSec:          5,
+			Timestamp:           6,
+			UserName:            "uname",
+			WastedCPUSeconds:    7.1,
+			WastedMBSeconds:     7.2,
+			RawWastedCPUSeconds: 7.1,
+			RawWastedMBSeconds:  7.2,
 		}
 
 		detailBytes, err := details.Serialize() //nolint:misspell
 		So(err, ShouldBeNil)
-		So(len(detailBytes), ShouldEqual, 127)
+		So(len(detailBytes), ShouldEqual, 143)
 
 		recovered, err := DeserializeDetails(detailBytes, 0)
 		So(err, ShouldBeNil)
@@ -84,7 +86,7 @@ func TestDetails(t *testing.T) {
 
 		detailBytes, err = details.Serialize() //nolint:misspell
 		So(err, ShouldBeNil)
-		So(len(detailBytes), ShouldEqual, 124)
+		So(len(detailBytes), ShouldEqual, 140)
 
 		recovered, err = DeserializeDetails(detailBytes, 0)
 		So(err, ShouldBeNil)
@@ -159,28 +161,30 @@ func TestDetails(t *testing.T) {
 		So(recovered, ShouldResemble, &Details{ID: expectedID, BOM: "bname", WastedMBSeconds: 7.2})
 
 		details = &Details{
-			ID:                strings.Repeat("a", 26),
-			AccountingName:    strings.Repeat("a", 24),
-			AvailCPUTimeSec:   0,
-			BOM:               strings.Repeat("b", 34),
-			Command:           strings.Repeat("cmd:", 1000),
-			JobName:           strings.Repeat("jname-", 2000),
-			Job:               strings.Repeat("job;", 3000),
-			MemRequestedMB:    1,
-			MemRequestedMBSec: 2,
-			NumExecProcs:      3,
-			PendingTimeSec:    4,
-			QueueName:         strings.Repeat("q", 22),
-			RunTimeSec:        5,
-			Timestamp:         6,
-			UserName:          strings.Repeat("u", 12),
-			WastedCPUSeconds:  7.1,
-			WastedMBSeconds:   7.2,
+			ID:                  strings.Repeat("a", 26),
+			AccountingName:      strings.Repeat("a", 24),
+			AvailCPUTimeSec:     0,
+			BOM:                 strings.Repeat("b", 34),
+			Command:             strings.Repeat("cmd:", 1000),
+			JobName:             strings.Repeat("jname-", 2000),
+			Job:                 strings.Repeat("job;", 3000),
+			MemRequestedMB:      1,
+			MemRequestedMBSec:   2,
+			NumExecProcs:        3,
+			PendingTimeSec:      4,
+			QueueName:           strings.Repeat("q", 22),
+			RunTimeSec:          5,
+			Timestamp:           6,
+			UserName:            strings.Repeat("u", 12),
+			WastedCPUSeconds:    0,
+			WastedMBSeconds:     0,
+			RawWastedCPUSeconds: 7.1,
+			RawWastedMBSeconds:  7.2,
 		}
 
 		detailBytes, err = details.Serialize() //nolint:misspell
 		So(err, ShouldBeNil)
-		So(len(detailBytes), ShouldEqual, 7714)
+		So(len(detailBytes), ShouldEqual, 7730)
 
 		recovered, err = DeserializeDetails(detailBytes, 0)
 		So(err, ShouldBeNil)
@@ -201,5 +205,7 @@ func TestDetails(t *testing.T) {
 		So(recovered.Job, ShouldContainSubstring, truncationIndicator)
 		So(recovered.QueueName, ShouldEqual, details.QueueName)
 		So(recovered.UserName, ShouldEqual, details.UserName)
+		So(recovered.RawWastedCPUSeconds, ShouldEqual, details.RawWastedCPUSeconds)
+		So(recovered.RawWastedMBSeconds, ShouldEqual, details.RawWastedMBSeconds)
 	})
 }
