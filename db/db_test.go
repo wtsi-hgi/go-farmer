@@ -138,15 +138,15 @@ func TestDB(t *testing.T) {
 			dir = filepath.Join(dir, bomA)
 			entries, err = os.ReadDir(dir)
 			So(err, ShouldBeNil)
-			So(len(entries), ShouldEqual, 22)
+			So(len(entries), ShouldEqual, 24)
 			So(entries[0].Type().IsRegular(), ShouldBeTrue)
 			So(entries[0].Name(), ShouldEqual, "0.data")
 			So(entries[1].Type().IsRegular(), ShouldBeTrue)
 			So(entries[1].Name(), ShouldEqual, "0.index")
-			So(entries[21].Type().IsRegular(), ShouldBeTrue)
-			So(entries[21].Name(), ShouldEqual, "9.index")
-			So(entries[5].Type().IsRegular(), ShouldBeTrue)
-			So(entries[5].Name(), ShouldEqual, "10.index")
+			So(entries[23].Type().IsRegular(), ShouldBeTrue)
+			So(entries[23].Name(), ShouldEqual, "9.index")
+			So(entries[7].Type().IsRegular(), ShouldBeTrue)
+			So(entries[7].Name(), ShouldEqual, "11.index")
 
 			indexFilePath := filepath.Join(dir, "0.index")
 			bIndex, err := os.ReadFile(indexFilePath)
@@ -180,7 +180,7 @@ func TestDB(t *testing.T) {
 
 			nextFieldStart += lengthEncodeWidth
 			detailsLen := int(binary.BigEndian.Uint32(bIndex[nextFieldStart : nextFieldStart+lengthEncodeWidth]))
-			expectedDetailsLen := 127
+			expectedDetailsLen := 143
 			So(detailsLen, ShouldEqual, expectedDetailsLen)
 
 			detailsBytes := bData[dataPos:detailsLen]
@@ -201,13 +201,13 @@ func TestDB(t *testing.T) {
 			dir = filepath.Join(dbDir, "2024", "02", "05", bomA)
 			entries, err = os.ReadDir(dir)
 			So(err, ShouldBeNil)
-			So(len(entries), ShouldEqual, 22)
+			So(len(entries), ShouldEqual, 24)
 
-			indexFilePath = filepath.Join(dir, "10.index")
+			indexFilePath = filepath.Join(dir, "11.index")
 			bIndex, err = os.ReadFile(indexFilePath)
 			So(err, ShouldBeNil)
 
-			dataFilePath = filepath.Join(dir, "10.data")
+			dataFilePath = filepath.Join(dir, "11.data")
 			bData, err = os.ReadFile(dataFilePath)
 			So(err, ShouldBeNil)
 
@@ -541,21 +541,23 @@ func makeResult(gte, lte time.Time) *es.Result {
 
 		hit := es.Hit{
 			Details: &es.Details{
-				Timestamp:         timeStamp.Unix(),
-				BOM:               bom,
-				AccountingName:    aName,
-				UserName:          uName,
-				QueueName:         qName,
-				Command:           "cmd",
-				JobName:           jName,
-				Job:               "job",
-				MemRequestedMB:    1,
-				MemRequestedMBSec: 2,
-				NumExecProcs:      3,
-				PendingTimeSec:    4,
-				RunTimeSec:        5,
-				WastedCPUSeconds:  6.1,
-				WastedMBSeconds:   7.1,
+				Timestamp:           timeStamp.Unix(),
+				BOM:                 bom,
+				AccountingName:      aName,
+				UserName:            uName,
+				QueueName:           qName,
+				Command:             "cmd",
+				JobName:             jName,
+				Job:                 "job",
+				MemRequestedMB:      1,
+				MemRequestedMBSec:   2,
+				NumExecProcs:        3,
+				PendingTimeSec:      4,
+				RunTimeSec:          5,
+				WastedCPUSeconds:    6.1,
+				WastedMBSeconds:     7.1,
+				RawWastedCPUSeconds: 8.1,
+				RawWastedMBSeconds:  9.1,
 			},
 		}
 
