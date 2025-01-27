@@ -242,6 +242,8 @@ func TestQuery(t *testing.T) {
 			{name: "USER_NAME", expected: FieldUserName},
 			{name: "WASTED_CPU_SECONDS", expected: FieldWastedCPUSeconds},
 			{name: "WASTED_MB_SECONDS", expected: FieldWastedMBSeconds},
+			{name: "RAW_WASTED_CPU_SECONDS", expected: FieldRawWastedCPUSeconds},
+			{name: "RAW_WASTED_MB_SECONDS", expected: FieldRawWastedMBSeconds},
 		}
 
 		for _, test := range tests {
@@ -258,7 +260,8 @@ func TestQuery(t *testing.T) {
 				FieldBOM, FieldCommand, FieldJobName, FieldJob, FieldMemRequestedMB,
 				FieldMemRequestedMBSec, FieldNumExecProcs, FieldPendingTimeSec,
 				FieldQueueName, FieldRunTimeSec, FieldTimestamp, FieldUserName,
-				FieldWastedCPUSeconds, FieldWastedMBSeconds} {
+				FieldWastedCPUSeconds, FieldWastedMBSeconds,
+				FieldRawWastedCPUSeconds, FieldRawWastedMBSeconds} {
 				if field == test.expected {
 					continue
 				}
