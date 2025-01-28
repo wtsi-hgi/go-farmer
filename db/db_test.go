@@ -291,7 +291,7 @@ func TestDB(t *testing.T) {
 					So(erru, ShouldBeNil)
 
 					sort.Strings(usernames)
-					So(usernames, ShouldResemble, []string{"userA", "userB", "userNameTooLong"})
+					So(usernames, ShouldResemble, []string{"userA", "userB", "userNameLongest"})
 
 					Convey("you can filter on things not in the index", func() {
 						jMatch := map[string]es.MapStringStringOrMap{"prefix": map[string]interface{}{"JOB_NAME": "nf"}}
@@ -462,7 +462,7 @@ func TestDB(t *testing.T) {
 					db, err = New(config, false)
 					So(err, ShouldBeNil)
 
-					longName := "userNameTooLong"
+					longName := "userNameLongest"
 
 					userMatch := []map[string]es.MapStringStringOrMap{
 						{"match_phrase": map[string]interface{}{"BOM": bomA}},
@@ -556,7 +556,7 @@ func makeResult(gte, lte time.Time) *es.Result {
 		}
 
 		if hits == 5 {
-			uName = "userNameTooLong"
+			uName = "userNameLongest"
 		}
 
 		if hits == 7 {
