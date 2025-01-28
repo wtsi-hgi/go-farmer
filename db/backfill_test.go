@@ -61,6 +61,31 @@ func TestBackfill(t *testing.T) {
 
 	period := (2 * 24) * time.Hour
 
+	Convey("Given a problematic mock elasticsearch client, you can Backfill() with an error", t, func() {
+		slog.SetLogLoggerLevel(slog.LevelWarn)
+
+		dir := t.TempDir()
+		mock := es.NewMock("long_group")
+		config := Config{Directory: filepath.Join(dir, "notexist")}
+
+		errCh := make(chan error)
+
+		go func() {
+			errCh <- Backfill(mock, config, from, period)
+		}()
+
+		var err error
+
+		select {
+		case err = <-errCh:
+			So(err, ShouldNotBeNil)
+		case <-time.After(5 * time.Second):
+			So(err, ShouldNotBeNil)
+		}
+
+		So(err.Error(), ShouldStartWith, ErrFieldTooLong)
+	})
+
 	Convey("Given a mock elasticsearch client, db config and period, you can Backfill()", t, func() {
 		slog.SetLogLoggerLevel(slog.LevelWarn)
 
