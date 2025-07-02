@@ -39,7 +39,7 @@ import (
 )
 
 const (
-	fileSize        = 512 * 1024
+	fileSize        = 518 * 1024
 	bufferSize      = 256 * 1024
 	updateFrequency = 50 * time.Millisecond
 )
@@ -536,7 +536,7 @@ func makeResult(gte, lte time.Time) *es.Result {
 		}
 
 		if hits%5 == 0 {
-			aName = "groupB"
+			aName = "groupB0123456789-priority"
 		}
 
 		if hits%9 == 0 {
