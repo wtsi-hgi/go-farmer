@@ -142,7 +142,7 @@ func (f *flatDB) storeIndex(timestamp int64, group, user []byte, isGPU byte, dat
 }
 
 func getFixedWidthFields(hit *es.Hit) ([]byte, []byte, byte, []byte, error) {
-	group, err := fixedWidthField(hit.Details.AccountingName, accountingNameWidth)
+	group, err := fixedWidthField(hackFixGroupTruncate(hit.Details.AccountingName), accountingNameWidth)
 	if err != nil {
 		return nil, nil, 0, nil, err
 	}
@@ -165,6 +165,22 @@ func getFixedWidthFields(hit *es.Hit) ([]byte, []byte, byte, []byte, error) {
 	}
 
 	return group, user, isGPU, encodedDetails, nil
+}
+
+func hackFixGroupTruncate(group string) string {
+	if len(group) > accountingNameWidth && strings.HasSuffix(group, "-priority") {
+		return strings.TrimSuffix(group, "-priority") + "\x00"
+	}
+
+	return group
+}
+
+func hackFixGroupExpand(group string) string {
+	if strings.HasSuffix(group, "\x00") {
+		return strings.TrimSuffix(group, "\x00") + "-priority"
+	}
+
+	return group
 }
 
 func fixedWidthField(str string, width int) ([]byte, error) {
@@ -308,7 +324,7 @@ func newFlatIndex(path string, fileBufferSize int) (*flatIndex, error) { //nolin
 
 		entry.length = btoi(lenBuf)
 
-		group := strings.TrimSpace(string(accBuf))
+		group := hackFixGroupExpand(strings.TrimSpace(string(accBuf)))
 		user := strings.TrimSpace(string(userBuf))
 		entry.userName = user
 
