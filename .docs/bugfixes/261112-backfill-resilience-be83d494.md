@@ -43,10 +43,17 @@
   so `make lint` fails with "unsupported version of the configuration".
 - [ ] `make race` with slow tests exceeds `go test`'s default 10m timeout
   (real-ES `TestBackfill` ~630s under `-race`); the target sets no `-timeout`.
-- [ ] Flaky: db `TestBackfill` "Repeating Backfill() handles potentially
+- [x] Flaky: db `TestBackfill` "Repeating Backfill() handles potentially
   corrupt prior days by starting them from scratch" fails its
   `infoRepeat.ModTime() ShouldHappenAfter infoOrig31.ModTime()` check when the
   two mtimes are equal (5/50 runs on clean HEAD `5908506`).
+  - Red: `CGO_ENABLED=1 go test -tags netgo --count 50 ./db -run TestBackfill`
+    (exit 1) at `cc2f840`: 15/50 failures at line 231, `Expected '...19.486538678'
+    to happen after '...19.486538678' (it happened '0s' before)!`
+  - Fixed in `db/backfill_test.go`: backdate the incomplete day's `0.index`
+    by an hour with `os.Chtimes` before the repeat, then assert the new mtime
+    is after that. 0/50 failures, `-race` 20/20; both `checkIfNeeded` mutants
+    still killed. Review PASS.
 
 ## Known limitation (not fixed here)
 

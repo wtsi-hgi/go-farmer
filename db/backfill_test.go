@@ -183,7 +183,7 @@ func TestBackfill(t *testing.T) {
 		infoOrig30, err := os.Stat(localPath30)
 		So(err, ShouldBeNil)
 
-		infoOrig31, err := os.Stat(localPath31)
+		_, err = os.Stat(localPath31)
 		So(err, ShouldBeNil)
 
 		query := rangeQuery(timeRange(from, period))
@@ -223,12 +223,16 @@ func TestBackfill(t *testing.T) {
 			err = f.Close()
 			So(err, ShouldBeNil)
 
+			past := time.Now().Add(-time.Hour)
+			err = os.Chtimes(localPath31, past, past)
+			So(err, ShouldBeNil)
+
 			err = Backfill(mock, config, from, period)
 			So(err, ShouldBeNil)
 
 			infoRepeat, err := os.Stat(localPath31)
 			So(err, ShouldBeNil)
-			So(infoRepeat.ModTime(), ShouldHappenAfter, infoOrig31.ModTime())
+			So(infoRepeat.ModTime(), ShouldHappenAfter, past)
 
 			_, err = os.Stat(extraPath)
 			So(err, ShouldNotBeNil)
