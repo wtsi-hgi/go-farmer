@@ -26,7 +26,7 @@
 package db
 
 import (
-	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -42,7 +42,21 @@ const (
 
 	maxSimultaneousBackfills = 16
 	successBasename          = ".backfill_successful"
+
+	// maxBackfillAttempts is a count rather than a deadline so that a run
+	// that keeps failing gives up at a predictable time: about 6 hours of
+	// retry delays.
+	maxBackfillAttempts = 12
+	firstRetryDelay     = time.Minute
+	maxRetryDelay       = time.Hour
 )
+
+// errQueryElasticsearch marks a backfill failure in querying elasticsearch,
+// the only kind of failure worth retrying.
+var errQueryElasticsearch = errors.New("query elasticsearch")
+
+// retrySleep waits between attempts at backfilling a day; tests replace it.
+var retrySleep = time.Sleep //nolint:gochecknoglobals
 
 // Scroller types have a Scroll function for querying something like elastic
 // search, automatically getting all hits in a single scroll call.
@@ -55,6 +69,12 @@ type Scroller interface {
 //
 // If the configured database directory already has any results for a particular
 // day, that day will be skipped.
+//
+// A day whose elasticsearch query fails is retried after a delay of 1 minute,
+// doubling after each failure up to a maximum of 1 hour, until it has been
+// attempted 12 times. A day that fails to be stored locally is not retried.
+// A failed day's partial data is removed after each failure. Other days are
+// unaffected, and the returned error joins the errors of every day that failed.
 func Backfill(client Scroller, config Config, from time.Time, period time.Duration) (err error) {
 	ldb := newDBStruct(config, true)
 
@@ -63,8 +83,12 @@ func Backfill(client Scroller, config Config, from time.Time, period time.Durati
 
 func backfillByDay(client Scroller, ldb *DB, from time.Time, period time.Duration) error {
 	gte, lt := timeRange(from, period)
-	g, _ := errgroup.WithContext(context.Background())
+
+	var g errgroup.Group
+
 	g.SetLimit(maxSimultaneousBackfills)
+
+	var dayErrs []*error
 
 	for !gte.After(lt) {
 		from, lt := timeRange(gte, oneDay)
@@ -72,19 +96,83 @@ func backfillByDay(client Scroller, ldb *DB, from time.Time, period time.Duratio
 
 		successPath, err := checkIfNeeded(ldb, from)
 		if err != nil {
-			return err
+			err = fmt.Errorf("day %s..%s: %w", timestamp(from), timestamp(lt), err)
+			dayErrs = append(dayErrs, &err)
+
+			continue
 		}
 
 		if successPath == "" {
 			continue
 		}
 
+		dayErr := new(error)
+		dayErrs = append(dayErrs, dayErr)
+
 		g.Go(func() error {
-			return queryElasticAndStoreLocally(client, ldb, from, lt, successPath)
+			*dayErr = backfillDay(client, ldb, from, lt, successPath)
+
+			return nil
 		})
 	}
 
-	return g.Wait()
+	g.Wait() //nolint:errcheck
+
+	errs := make([]error, len(dayErrs))
+	for i, dayErr := range dayErrs {
+		errs[i] = *dayErr
+	}
+
+	return errors.Join(errs...)
+}
+
+// backfillDay attempts to store the day from gte to lt, removing the day's
+// partial data after each failure. Elasticsearch query failures are retried
+// up to maxBackfillAttempts times; other failures are returned immediately.
+func backfillDay(client Scroller, ldb *DB, gte, lt time.Time, successPath string) error {
+	dayRange := timestamp(gte) + ".." + timestamp(lt)
+
+	for attempt := 1; ; attempt++ {
+		err := queryElasticAndStoreLocally(client, ldb, gte, lt, successPath)
+		if err == nil {
+			return nil
+		}
+
+		if rmErr := os.RemoveAll(ldb.dateFolder(gte)); rmErr != nil {
+			return fmt.Errorf("day %s: attempt %d: %w; remove partial data: %w", dayRange, attempt, err, rmErr)
+		}
+
+		if !errors.Is(err, errQueryElasticsearch) {
+			return fmt.Errorf("day %s: %w", dayRange, err)
+		}
+
+		if attempt == maxBackfillAttempts {
+			return fmt.Errorf("day %s: gave up after %d attempts: %w", dayRange, attempt, err)
+		}
+
+		delay := retryDelay(attempt)
+
+		slog.Warn("backfill day failed", "gte", timestamp(gte), "lt", timestamp(lt), "attempt", attempt,
+			"err", err, "retry_in", delay)
+
+		retrySleep(delay)
+	}
+}
+
+// retryDelay returns how long to wait after the given failed attempt (counting
+// from 1).
+func retryDelay(attempt int) time.Duration {
+	delay := firstRetryDelay
+
+	for range attempt - 1 {
+		delay *= 2
+
+		if delay >= maxRetryDelay {
+			return maxRetryDelay
+		}
+	}
+
+	return delay
 }
 
 func queryElasticAndStoreLocally(client Scroller, ldb *DB, gte, lt time.Time, successPath string) error {
@@ -110,11 +198,11 @@ func queryElasticAndStoreLocally(client Scroller, ldb *DB, gte, lt time.Time, su
 		close(storeFailed)
 		<-errCh
 
-		return fmt.Errorf("day %s..%s: store locally: %w", timestamp(gte), timestamp(lt), err)
+		return fmt.Errorf("store locally: %w", err)
 	}
 
 	if err := <-errCh; err != nil {
-		return fmt.Errorf("day %s..%s: query elasticsearch: %w", timestamp(gte), timestamp(lt), err)
+		return fmt.Errorf("%w: %w", errQueryElasticsearch, err)
 	}
 
 	slog.Info("search&store successful", "took", time.Since(t), "gte", timestamp(gte), "lte", timestamp(lt))
