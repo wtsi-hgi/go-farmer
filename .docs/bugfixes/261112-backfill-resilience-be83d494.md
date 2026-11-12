@@ -52,8 +52,10 @@
     mapped: deadline->timeout, gomnd->mnd, tenv->usetesting; check-exported,
     govet.shadow key and exportloopref removed as v2 equivalents/defaults)
     and the Makefile install comment. `make lint` 0 issues. Review PASS.
-- [ ] `make race` with slow tests exceeds `go test`'s default 10m timeout
+- [x] `make race` with slow tests exceeds `go test`'s default 10m timeout
   (real-ES `TestBackfill` ~630s under `-race`); the target sets no `-timeout`.
+  - Red: `make -n race` showed no `-timeout`, so go test's 10m default applied.
+  - Fixed in `Makefile`: `testslow` and `race` pass `-timeout 30m`. Review PASS.
 - [x] Flaky: db `TestBackfill` "Repeating Backfill() handles potentially
   corrupt prior days by starting them from scratch" fails its
   `infoRepeat.ModTime() ShouldHappenAfter infoOrig31.ModTime()` check when the

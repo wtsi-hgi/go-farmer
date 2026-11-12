@@ -26,14 +26,14 @@ test:
 testslow: export CGO_ENABLED = 0
 testslow: export GOFARMER_SLOWTESTS = 1
 testslow:
-	@go test -tags netgo --count 1 .
-	@go test -tags netgo --count 1 $(shell go list ./... | tail -n+2)
+	@go test -tags netgo -timeout 30m --count 1 .
+	@go test -tags netgo -timeout 30m --count 1 $(shell go list ./... | tail -n+2)
 
 race: export CGO_ENABLED = 1
 race: export GOFARMER_SLOWTESTS = 1
 race:
-	@go test -tags netgo -race --count 1 .
-	@go test -tags netgo -race --count 1 $(shell go list ./... | tail -n+2)
+	@go test -tags netgo -race -timeout 30m --count 1 .
+	@go test -tags netgo -race -timeout 30m --count 1 $(shell go list ./... | tail -n+2)
 
 bench: export CGO_ENABLED = 1
 bench:
