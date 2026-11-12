@@ -27,6 +27,7 @@ package db
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -313,7 +314,7 @@ func (d *DB) Store(hitCh chan *es.Hit) error {
 	for hit := range hitCh {
 		prevDay, err = d.storeHit(hit, flatDBs, prevDay)
 		if err != nil {
-			return err
+			return errors.Join(err, closeFlatDBs(flatDBs))
 		}
 	}
 

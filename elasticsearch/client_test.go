@@ -27,13 +27,28 @@
 package elasticsearch
 
 import (
+	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
+
+var dottedVersionRegexp = regexp.MustCompile(`^\d+\.\d+\.\d+`)
+
+// shouldBeDottedVersion is a GoConvey assertion that passes when actual is a
+// string starting with a major.minor.patch version number.
+func shouldBeDottedVersion(actual any, _ ...any) string {
+	version, ok := actual.(string)
+	if ok && dottedVersionRegexp.MatchString(version) {
+		return ""
+	}
+
+	return fmt.Sprintf("Expected a dotted version number, got %q", actual)
+}
 
 func TestElasticSearchClientMock(t *testing.T) {
 	Convey("Given some config", t, func() {
@@ -49,11 +64,13 @@ func TestElasticSearchClientMock(t *testing.T) {
 			transport: mockTrans,
 		}
 
-		doClientTests(t, config, 2)
+		doClientTests(t, config, func(version string) {
+			So(version, ShouldEqual, testExpectedVersion)
+		}, 2)
 	})
 }
 
-func doClientTests(t *testing.T, config Config, expectedNumHits int) {
+func doClientTests(t *testing.T, config Config, checkVersion func(string), expectedNumHits int) {
 	t.Helper()
 
 	Convey("You can create an elasticsearch client", func() {
@@ -63,7 +80,7 @@ func doClientTests(t *testing.T, config Config, expectedNumHits int) {
 
 		info, err := client.Info()
 		So(err, ShouldBeNil)
-		So(info.Version.Number, ShouldEqual, testExpectedVersion)
+		checkVersion(info.Version.Number)
 
 		Convey("And given an elasticsearch aggregation query json", func() {
 			jsonStr := testAggQuery
@@ -204,6 +221,8 @@ func TestElasticSearchClientReal(t *testing.T) {
 			Index:    index,
 		}
 
-		doClientTests(t, config, 403)
+		doClientTests(t, config, func(version string) {
+			So(version, shouldBeDottedVersion)
+		}, 403)
 	})
 }
