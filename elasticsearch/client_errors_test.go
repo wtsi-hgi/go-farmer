@@ -86,12 +86,18 @@ func faultResponse(status int, body io.Reader) *http.Response {
 }
 
 func faultClient(initial func() *http.Response, page func(int) *http.Response) *Client {
+	return transportClient(faultTransport{initial: initial, page: page, pages: new(int)})
+}
+
+// transportClient returns a Client whose requests all go to the given
+// transport.
+func transportClient(transport http.RoundTripper) *Client {
 	client, err := NewClient(Config{
 		Host:      "fault",
 		Scheme:    "http",
 		Port:      mockPort,
 		Index:     "fault",
-		transport: faultTransport{initial: initial, page: page, pages: new(int)},
+		transport: transport,
 	})
 	So(err, ShouldBeNil)
 

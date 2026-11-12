@@ -79,9 +79,18 @@
 
 ## Found during item 2
 
-- [ ] `elasticsearch/result.go` `parseResultResponse` returns on an error
+- [x] `elasticsearch/result.go` `parseResultResponse` returns on an error
   status before `defer resp.Body.Close()`, so the body (and connection) leaks
   on every failed request; retries (item 3) would repeat the leak.
+  - Not a leak as described: go-elasticsearch v7.17.10 `Response.String()`
+    closes the body. Real leaks found instead in `elasticsearch/client.go`:
+    `Info()` and `scrollCleanup` (ClearScroll response) never closed bodies.
+  - Red: `CGO_ENABLED=1 go test -tags netgo --count 1 ./elasticsearch -v -run
+    TestResponseBodiesAreClosed` (exit 1): 3 cases `Expected: 0 Actual: 1`
+    unclosed bodies.
+  - Fixed in `elasticsearch/client.go` (+ `client_body_close_test.go`,
+    `client_errors_test.go` helper extraction). Review PASS (cycle 2), 4/4
+    mutants killed incl. nil-resp guard in `scrollCleanup`.
 - [ ] A multi-day backfill where several days fail reports only the first
   failure (errgroup), so the cron email hides other failed days. Address with
   item 3 by reporting every failed day.

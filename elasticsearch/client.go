@@ -90,6 +90,8 @@ func (c *Client) Info() (*ElasticInfo, error) {
 		return nil, err
 	}
 
+	defer resp.Body.Close()
+
 	info := &ElasticInfo{}
 
 	err = json.NewDecoder(resp.Body).Decode(info)
@@ -158,10 +160,14 @@ func (c *Client) scrollCleanup(result *Result) {
 		return
 	}
 
-	_, err = c.client.ClearScroll(c.client.ClearScroll.WithBody(scrollIDBody))
+	resp, err := c.client.ClearScroll(c.client.ClearScroll.WithBody(scrollIDBody))
 	if err != nil {
 		c.Error = err
+
+		return
 	}
+
+	resp.Body.Close()
 }
 
 func scrollIDBody(scrollID string) (*bytes.Buffer, error) {
