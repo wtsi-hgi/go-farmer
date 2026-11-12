@@ -44,8 +44,14 @@
   - Fixed in `elasticsearch/client_test.go`: `doClientTests` takes a version
     check; the mock asserts the exact mock version, the real server asserts a
     dotted version number. Review PASS; `make test` exit 0.
-- [ ] `.golangci.yml` is v1 format but the installed golangci-lint is v2.14.0,
+- [x] `.golangci.yml` is v1 format but the installed golangci-lint is v2.14.0,
   so `make lint` fails with "unsupported version of the configuration".
+  - Red: `make lint` (exit 2): `can't load config: unsupported version of the
+    configuration: ""`.
+  - Fixed in `.golangci.yml` (migrated to v2, dropped settings restored or
+    mapped: deadline->timeout, gomnd->mnd, tenv->usetesting; check-exported,
+    govet.shadow key and exportloopref removed as v2 equivalents/defaults)
+    and the Makefile install comment. `make lint` 0 issues. Review PASS.
 - [ ] `make race` with slow tests exceeds `go test`'s default 10m timeout
   (real-ES `TestBackfill` ~630s under `-race`); the target sets no `-timeout`.
 - [x] Flaky: db `TestBackfill` "Repeating Backfill() handles potentially
