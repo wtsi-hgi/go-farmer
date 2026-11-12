@@ -37,8 +37,13 @@
 
 ## Gate blockers found during item 1 (pre-existing, fixed on this branch)
 
-- [ ] `elasticsearch/client_test.go:66` hard-codes ES version 7.17.6; the live
+- [x] `elasticsearch/client_test.go:66` hard-codes ES version 7.17.6; the live
   test server reports 8.19.14, so `make test` fails when `FARMER_TEST_*` is set.
+  - Red: `CGO_ENABLED=0 go test -tags netgo --count 1 ./elasticsearch` (exit 1):
+    `Line 66: Expected: "7.17.6" Actual: "8.19.14"`.
+  - Fixed in `elasticsearch/client_test.go`: `doClientTests` takes a version
+    check; the mock asserts the exact mock version, the real server asserts a
+    dotted version number. Review PASS; `make test` exit 0.
 - [ ] `.golangci.yml` is v1 format but the installed golangci-lint is v2.14.0,
   so `make lint` fails with "unsupported version of the configuration".
 - [ ] `make race` with slow tests exceeds `go test`'s default 10m timeout
