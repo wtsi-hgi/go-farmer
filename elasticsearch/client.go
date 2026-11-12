@@ -135,12 +135,12 @@ func (c *Client) Scroll(query *Query, cb HitsCallBack) (*Result, error) {
 		c.client.Search.WithScroll(scrollTime),
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("initial search: %w", err)
 	}
 
 	result, n, err := parseResultResponse(resp, cb)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("initial search: %w", err)
 	}
 
 	defer c.scrollCleanup(result)
@@ -179,10 +179,14 @@ func (c *Client) scrollUntilAllHitsReceived(result *Result, previousNumHits int,
 		return nil
 	}
 
+	page := 0
+
 	for keepScrolling := true; keepScrolling; keepScrolling = previousNumHits < total {
+		page++
+
 		n, err := c.scroll(result, cb)
 		if err != nil {
-			return err
+			return fmt.Errorf("scroll page %d after %d of %d hits: %w", page, previousNumHits, total, err)
 		}
 
 		if n == 0 {

@@ -27,6 +27,7 @@ package db
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -109,11 +110,11 @@ func queryElasticAndStoreLocally(client Scroller, ldb *DB, gte, lt time.Time, su
 		close(storeFailed)
 		<-errCh
 
-		return err
+		return fmt.Errorf("day %s..%s: store locally: %w", timestamp(gte), timestamp(lt), err)
 	}
 
 	if err := <-errCh; err != nil {
-		return err
+		return fmt.Errorf("day %s..%s: query elasticsearch: %w", timestamp(gte), timestamp(lt), err)
 	}
 
 	slog.Info("search&store successful", "took", time.Since(t), "gte", timestamp(gte), "lte", timestamp(lt))

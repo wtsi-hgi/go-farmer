@@ -24,9 +24,18 @@
     `Store` closes open flatDBs on error. Test asserts the error, that Scroll
     returns, no fd growth, and no leftover goroutine. Review PASS (cycle 3),
     all four fix components killed by mutants.
-- [ ] Backfill errors lack context: cron reported only
+- [x] Backfill errors lack context: cron reported only
   `backfill failed: unexpected EOF`, with no day or stage (initial search,
   scroll page, body read) identified.
+  - Red: `CGO_ENABLED=1 go test -tags netgo --count 1 ./db ./elasticsearch -run
+    'TestBackfill|TestScrollErrorContext'` (exit 1), e.g. `Expected "scroll page 1
+    after 1 of 23581 hits: read response body: unexpected EOF" Actual "unexpected EOF"`.
+  - Fixed in `elasticsearch/result.go`, `elasticsearch/client.go`,
+    `db/backfill.go` (+ tests `elasticsearch/client_errors_test.go`,
+    `db/backfill_test.go`): `%w` wraps add `day <gte>..<lt>: {query
+    elasticsearch|store locally}: {initial search|scroll page N after X of Y
+    hits}: {read response body|decode response}:`. Review PASS, 16/17
+    mutants killed (survivor: decode `%w`->`%v`, outside requirements).
 - [ ] Backfill does not retry a failed day. Retry each failed day with
   backoff that quickly grows to one hour, to ride out long Elasticsearch
   indexing or availability problems.
@@ -68,7 +77,20 @@
     is after that. 0/50 failures, `-race` 20/20; both `checkIfNeeded` mutants
     still killed. Review PASS.
 
+## Found during item 2
+
+- [ ] `elasticsearch/result.go` `parseResultResponse` returns on an error
+  status before `defer resp.Body.Close()`, so the body (and connection) leaks
+  on every failed request; retries (item 3) would repeat the leak.
+- [ ] A multi-day backfill where several days fail reports only the first
+  failure (errgroup), so the cron email hides other failed days. Address with
+  item 3 by reporting every failed day.
+
 ## Known limitation (not fixed here)
+
+- Errors from the clear-scroll call in `scrollCleanup` are stored in
+  `Client.Error` and never read by backfill; a failed clear only leaves the
+  scroll to expire after `scrollTime`.
 
 - `Scroller` cannot be cancelled: after a Store failure the ES scroll keeps
   fetching pages (hits discarded) until exhausted. Fixing needs a context on

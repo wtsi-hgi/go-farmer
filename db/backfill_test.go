@@ -26,7 +26,9 @@
 package db
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -119,7 +121,12 @@ func TestBackfill(t *testing.T) {
 			So(err, ShouldNotBeNil)
 		}
 
-		So(err.Error(), ShouldStartWith, ErrFieldTooLong)
+		So(err.Error(), ShouldStartWith, "day 2024-05-31T00:00:00Z..2024-06-01T00:00:00Z: store locally: "+ErrFieldTooLong)
+
+		var dbErr Error
+
+		So(errors.As(err, &dbErr), ShouldBeTrue)
+		So(dbErr.Msg, ShouldEqual, ErrFieldTooLong)
 	})
 
 	Convey("Given a scroller whose hits Store rejects part way through, Backfill() errors "+
@@ -144,7 +151,12 @@ func TestBackfill(t *testing.T) {
 		case <-time.After(5 * time.Second):
 		}
 
-		So(backfillOutcome, ShouldStartWith, ErrFieldTooLong)
+		storeErr := ": store locally: " + ErrFieldTooLong + ": '" + strings.Repeat("u", userNameWidth+1) +
+			"' is > " + strconv.Itoa(userNameWidth) + " characters"
+		So(backfillOutcome, ShouldBeIn, []string{
+			"day 2024-05-30T00:00:00Z..2024-05-31T00:00:00Z" + storeErr,
+			"day 2024-05-31T00:00:00Z..2024-06-01T00:00:00Z" + storeErr,
+		})
 
 		scrollsDone := make(chan struct{})
 
@@ -164,6 +176,18 @@ func TestBackfill(t *testing.T) {
 		So(outcome, ShouldEqual, "Scroll returned")
 		So(openFDCount(), ShouldEqual, fdsBefore)
 		So(goroutineStackContaining("queryElasticAndStoreLocally", 2*time.Second), ShouldBeEmpty)
+	})
+
+	Convey("Given a scroller that fails, Backfill()'s error names the day and stage and wraps the cause", t, func() {
+		slog.SetLogLoggerLevel(slog.LevelWarn)
+
+		scrollErr := fmt.Errorf("scroll page 2: read response body: %w", io.ErrUnexpectedEOF)
+		config := Config{Directory: t.TempDir()}
+
+		err := Backfill(failingScroller{failGTE: "2024-05-31T00:00:00Z", err: scrollErr}, config, from, oneDay)
+		So(err, ShouldWrap, io.ErrUnexpectedEOF)
+		So(err.Error(), ShouldEqual, "day 2024-05-31T00:00:00Z..2024-06-01T00:00:00Z: query elasticsearch: "+
+			"scroll page 2: read response body: unexpected EOF")
 	})
 
 	Convey("Given a mock elasticsearch client, db config and period, you can Backfill()", t, func() {
@@ -427,4 +451,19 @@ func updateFirstLastHitTimestamp(result *es.Result, first, last *time.Time) {
 			*last = t
 		}
 	}
+}
+
+// failingScroller is a Scroller whose Scroll sends no hits, and returns err
+// for the day starting at failGTE but succeeds for other days.
+type failingScroller struct {
+	failGTE string
+	err     error
+}
+
+func (f failingScroller) Scroll(query *es.Query, _ es.HitsCallBack) (*es.Result, error) {
+	if query.Query.Bool.Filter[1]["range"].GetMapString("timestamp", "gte") == f.failGTE {
+		return nil, f.err
+	}
+
+	return &es.Result{}, nil
 }
