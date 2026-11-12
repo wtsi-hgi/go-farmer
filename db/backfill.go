@@ -91,8 +91,12 @@ func queryElasticAndStoreLocally(client Scroller, ldb *DB, gte, lt time.Time, su
 	t := time.Now()
 	hitCh := make(chan *es.Hit)
 	errCh := make(chan error)
+	storeFailed := make(chan struct{})
 	cb := func(hit *es.Hit) {
-		hitCh <- hit
+		select {
+		case hitCh <- hit:
+		case <-storeFailed:
+		}
 	}
 
 	go func() {
@@ -101,13 +105,14 @@ func queryElasticAndStoreLocally(client Scroller, ldb *DB, gte, lt time.Time, su
 		errCh <- err
 	}()
 
-	err := ldb.Store(hitCh)
-	if err != nil {
+	if err := ldb.Store(hitCh); err != nil {
+		close(storeFailed)
+		<-errCh
+
 		return err
 	}
 
-	err = <-errCh
-	if err != nil {
+	if err := <-errCh; err != nil {
 		return err
 	}
 

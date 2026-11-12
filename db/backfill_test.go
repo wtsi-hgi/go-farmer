@@ -26,17 +26,53 @@
 package db
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
 )
+
+// storeRejectingScroller is a Scroller whose Scroll sends hitsBeforeBad valid
+// hits spread over two BOMs, then a hit with a user name too long for
+// DB.Store to accept, followed by hitsAfterBad valid hits. Its wg lets tests
+// wait for every Scroll call to return.
+type storeRejectingScroller struct {
+	hitsBeforeBad int
+	hitsAfterBad  int
+	wg            sync.WaitGroup
+}
+
+func (s *storeRejectingScroller) Scroll(query *es.Query, cb es.HitsCallBack) (*es.Result, error) {
+	s.wg.Add(1)
+	defer s.wg.Done()
+
+	ts := time.Date(2024, 5, 31, 12, 0, 0, 0, time.UTC).Unix()
+	hit := func(id, bom, user string) *es.Hit {
+		return &es.Hit{ID: id, Details: &es.Details{Timestamp: ts, BOM: bom, UserName: user}}
+	}
+
+	for i := range s.hitsBeforeBad {
+		cb(hit("before"+strconv.Itoa(i), "BOM "+strconv.Itoa(i%2), "user"))
+	}
+
+	cb(hit("bad", "Fake BOM", strings.Repeat("u", userNameWidth+1)))
+
+	for i := range s.hitsAfterBad {
+		cb(hit("after"+strconv.Itoa(i), "Fake BOM", "user"))
+	}
+
+	return &es.Result{}, nil
+}
 
 func TestBackfill(t *testing.T) {
 	from := time.Date(2024, 06, 1, 0, 30, 0, 0, time.UTC)
@@ -84,6 +120,50 @@ func TestBackfill(t *testing.T) {
 		}
 
 		So(err.Error(), ShouldStartWith, ErrFieldTooLong)
+	})
+
+	Convey("Given a scroller whose hits Store rejects part way through, Backfill() errors "+
+		"without leaving Scroll blocked or files open", t, func() {
+		slog.SetLogLoggerLevel(slog.LevelWarn)
+
+		scroller := &storeRejectingScroller{hitsBeforeBad: 4, hitsAfterBad: 10}
+		config := Config{Directory: t.TempDir()}
+		fdsBefore := openFDCount()
+
+		backfillErrCh := make(chan error, 1)
+
+		go func() {
+			backfillErrCh <- Backfill(scroller, config, from, oneDay)
+		}()
+
+		backfillOutcome := "Backfill() still blocked after 5s"
+
+		select {
+		case err := <-backfillErrCh:
+			backfillOutcome = fmt.Sprint(err)
+		case <-time.After(5 * time.Second):
+		}
+
+		So(backfillOutcome, ShouldStartWith, ErrFieldTooLong)
+
+		scrollsDone := make(chan struct{})
+
+		go func() {
+			scroller.wg.Wait()
+			close(scrollsDone)
+		}()
+
+		outcome := "Scroll still blocked after 5s"
+
+		select {
+		case <-scrollsDone:
+			outcome = "Scroll returned"
+		case <-time.After(5 * time.Second):
+		}
+
+		So(outcome, ShouldEqual, "Scroll returned")
+		So(openFDCount(), ShouldEqual, fdsBefore)
+		So(goroutineStackContaining("queryElasticAndStoreLocally", 2*time.Second), ShouldBeEmpty)
 	})
 
 	Convey("Given a mock elasticsearch client, db config and period, you can Backfill()", t, func() {
@@ -197,6 +277,38 @@ func TestBackfill(t *testing.T) {
 
 		realBackfillTest(client, config, from, period)
 	})
+}
+
+// openFDCount returns the number of file descriptors this process has open.
+func openFDCount() int {
+	entries, err := os.ReadDir("/proc/self/fd")
+	So(err, ShouldBeNil)
+
+	return len(entries)
+}
+
+// goroutineStackContaining polls for up to timeout until no goroutine's stack
+// mentions name, returning the matching stack if one still does.
+func goroutineStackContaining(name string, timeout time.Duration) string {
+	buf := make([]byte, 1<<20)
+	deadline := time.Now().Add(timeout)
+
+	for {
+		stacks := strings.Split(string(buf[:runtime.Stack(buf, true)]), "\n\n")
+
+		i := slices.IndexFunc(stacks, func(stack string) bool {
+			return strings.Contains(stack, name)
+		})
+		if i == -1 {
+			return ""
+		}
+
+		if time.Now().After(deadline) {
+			return stacks[i]
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func realBackfillTest(client Scroller, config Config, from time.Time, period time.Duration) {
