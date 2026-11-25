@@ -63,6 +63,13 @@ First populate the local database:
 farmer backfill -c /path/to/config.yml -p 1d
 ```
 
+Days already stored are skipped. Only failures to query Elasticsearch are
+retried: a day whose query fails is retried after 1 minute, with the delay
+doubling up to 1 hour between attempts, and is given up on after 12 failed
+attempts (about 6 hours of retry delays). A day whose data can't be stored locally fails
+immediately. Backfill then exits with an error naming every day that failed;
+rerun it later to fill them in.
+
 Now start the server (you can leave it running and repeat the backfill the next
 day and it will see the new data automatically):
 

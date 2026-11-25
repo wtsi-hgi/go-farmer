@@ -69,6 +69,16 @@ farmer backfill -p 2d
 
 every day, to cover yourself if it failed on one day for example, or you forgot
 to run it.
+
+If querying elastic search for a day fails (eg. it drops the connection),
+that day's partial data is deleted and the day is retried after 1 minute, then
+after delays that double up to a maximum of 1 hour (1, 2, 4, 8, 16, 32, 60,
+60... minutes). Each failure is logged as a warning. A day is given up on after
+12 attempts (about 6 hours of waiting). Only elastic search query failures
+are retried: if a day's data can't be stored locally (eg. a field value is too
+long), its partial data is deleted and that day fails immediately. Other days
+carry on independently, and the command then exits with an error listing every
+day that failed; a later run will try those days again.
 `,
 	Run: func(_ *cobra.Command, _ []string) {
 		config := ParseConfig()

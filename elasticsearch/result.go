@@ -44,6 +44,8 @@ const (
 	MaxEncodedDetailsLength = 16 * 1024
 )
 
+const ErrFailedQuery = "elasticsearch query failed"
+
 // Error is an error type that has a Msg with one of our const Err* messages.
 type Error struct {
 	Msg   string
@@ -58,8 +60,6 @@ func (e Error) Error() string {
 
 	return e.Msg
 }
-
-const ErrFailedQuery = "elasticsearch query failed"
 
 // Result holds the results of a search query.
 type Result struct {
@@ -498,14 +498,14 @@ func parseResultResponse(resp *esapi.Response, cb HitsCallBack) (*Result, int, e
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("read response body: %w", err)
 	}
 
 	result := &Result{}
 
 	n, err := result.FromJSON(data, cb)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("decode response: %w", err)
 	}
 
 	return result, n, nil

@@ -26,17 +26,65 @@
 package db
 
 import (
+	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	es "github.com/wtsi-hgi/go-farmer/elasticsearch"
 )
+
+const (
+	goodBOM    = "Human Genetics"
+	partialBOM = "Partial BOM"
+)
+
+// storeRejectingScroller is a Scroller whose Scroll sends hitsBeforeBad valid
+// hits for the queried day spread over two BOMs, then a hit with a user name
+// too long for DB.Store to accept, followed by hitsAfterBad valid hits. Its wg
+// lets tests wait for every Scroll call to return.
+type storeRejectingScroller struct {
+	hitsBeforeBad int
+	hitsAfterBad  int
+	wg            sync.WaitGroup
+}
+
+func (s *storeRejectingScroller) Scroll(query *es.Query, cb es.HitsCallBack) (*es.Result, error) {
+	s.wg.Add(1)
+	defer s.wg.Done()
+
+	day, err := time.Parse(time.RFC3339, query.Query.Bool.Filter[1]["range"].GetMapString("timestamp", "gte"))
+	if err != nil {
+		return nil, err
+	}
+
+	ts := day.Add(12 * time.Hour).Unix()
+	hit := func(id, bom, user string) *es.Hit {
+		return &es.Hit{ID: id, Details: &es.Details{Timestamp: ts, BOM: bom, UserName: user}}
+	}
+
+	for i := range s.hitsBeforeBad {
+		cb(hit("before"+strconv.Itoa(i), "BOM "+strconv.Itoa(i%2), "user"))
+	}
+
+	cb(hit("bad", "Fake BOM", strings.Repeat("u", userNameWidth+1)))
+
+	for i := range s.hitsAfterBad {
+		cb(hit("after"+strconv.Itoa(i), "Fake BOM", "user"))
+	}
+
+	return &es.Result{}, nil
+}
 
 func TestBackfill(t *testing.T) {
 	from := time.Date(2024, 06, 1, 0, 30, 0, 0, time.UTC)
@@ -62,7 +110,8 @@ func TestBackfill(t *testing.T) {
 	period := (2 * 24) * time.Hour
 
 	Convey("Given a problematic mock elasticsearch client, you can Backfill() with an error", t, func() {
-		slog.SetLogLoggerLevel(slog.LevelWarn)
+		slog.SetLogLoggerLevel(slog.LevelError)
+		recordRetrySleeps()
 
 		dir := t.TempDir()
 		mock := es.NewMock("long_group")
@@ -83,7 +132,73 @@ func TestBackfill(t *testing.T) {
 			So(err, ShouldNotBeNil)
 		}
 
-		So(err.Error(), ShouldStartWith, ErrFieldTooLong)
+		So(err.Error(), ShouldStartWith, "day 2024-05-31T00:00:00Z..2024-06-01T00:00:00Z: store locally: "+ErrFieldTooLong)
+
+		var dbErr Error
+
+		So(errors.As(err, &dbErr), ShouldBeTrue)
+		So(dbErr.Msg, ShouldEqual, ErrFieldTooLong)
+	})
+
+	Convey("Given a scroller whose hits Store rejects part way through, Backfill() errors "+
+		"without leaving Scroll blocked or files open", t, func() {
+		slog.SetLogLoggerLevel(slog.LevelError)
+		recordRetrySleeps()
+
+		scroller := &storeRejectingScroller{hitsBeforeBad: 4, hitsAfterBad: 10}
+		config := Config{Directory: t.TempDir()}
+		fdsBefore := openFDCount()
+
+		backfillErrCh := make(chan error, 1)
+
+		go func() {
+			backfillErrCh <- Backfill(scroller, config, from, oneDay)
+		}()
+
+		backfillOutcome := "Backfill() still blocked after 5s"
+
+		select {
+		case err := <-backfillErrCh:
+			backfillOutcome = fmt.Sprint(err)
+		case <-time.After(5 * time.Second):
+		}
+
+		storeErr := ": store locally: " + ErrFieldTooLong + ": '" +
+			strings.Repeat("u", userNameWidth+1) + "' is > " + strconv.Itoa(userNameWidth) + " characters"
+		So(backfillOutcome, ShouldEqual, "day 2024-05-30T00:00:00Z..2024-05-31T00:00:00Z"+storeErr+
+			"\nday 2024-05-31T00:00:00Z..2024-06-01T00:00:00Z"+storeErr)
+
+		scrollsDone := make(chan struct{})
+
+		go func() {
+			scroller.wg.Wait()
+			close(scrollsDone)
+		}()
+
+		outcome := "Scroll still blocked after 5s"
+
+		select {
+		case <-scrollsDone:
+			outcome = "Scroll returned"
+		case <-time.After(5 * time.Second):
+		}
+
+		So(outcome, ShouldEqual, "Scroll returned")
+		So(openFDCount(), ShouldEqual, fdsBefore)
+		So(goroutineStackContaining("queryElasticAndStoreLocally", 2*time.Second), ShouldBeEmpty)
+	})
+
+	Convey("Given a scroller that fails, Backfill()'s error names the day and stage and wraps the cause", t, func() {
+		slog.SetLogLoggerLevel(slog.LevelError)
+		recordRetrySleeps()
+
+		scrollErr := fmt.Errorf("scroll page 2: read response body: %w", io.ErrUnexpectedEOF)
+		config := Config{Directory: t.TempDir()}
+
+		err := Backfill(failingScroller{failGTE: "2024-05-31T00:00:00Z", err: scrollErr}, config, from, oneDay)
+		So(err, ShouldWrap, io.ErrUnexpectedEOF)
+		So(err.Error(), ShouldEqual, "day 2024-05-31T00:00:00Z..2024-06-01T00:00:00Z: gave up after 12 attempts: "+
+			"query elasticsearch: scroll page 2: read response body: unexpected EOF")
 	})
 
 	Convey("Given a mock elasticsearch client, db config and period, you can Backfill()", t, func() {
@@ -103,7 +218,7 @@ func TestBackfill(t *testing.T) {
 		infoOrig30, err := os.Stat(localPath30)
 		So(err, ShouldBeNil)
 
-		infoOrig31, err := os.Stat(localPath31)
+		_, err = os.Stat(localPath31)
 		So(err, ShouldBeNil)
 
 		query := rangeQuery(timeRange(from, period))
@@ -143,12 +258,16 @@ func TestBackfill(t *testing.T) {
 			err = f.Close()
 			So(err, ShouldBeNil)
 
+			past := time.Now().Add(-time.Hour)
+			err = os.Chtimes(localPath31, past, past)
+			So(err, ShouldBeNil)
+
 			err = Backfill(mock, config, from, period)
 			So(err, ShouldBeNil)
 
 			infoRepeat, err := os.Stat(localPath31)
 			So(err, ShouldBeNil)
-			So(infoRepeat.ModTime(), ShouldHappenAfter, infoOrig31.ModTime())
+			So(infoRepeat.ModTime(), ShouldHappenAfter, past)
 
 			_, err = os.Stat(extraPath)
 			So(err, ShouldNotBeNil)
@@ -197,6 +316,54 @@ func TestBackfill(t *testing.T) {
 
 		realBackfillTest(client, config, from, period)
 	})
+}
+
+func recordRetrySleeps() *sleepRecorder {
+	r := &sleepRecorder{}
+	orig := retrySleep
+
+	Reset(func() { retrySleep = orig })
+
+	retrySleep = func(d time.Duration) {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+
+		r.delays = append(r.delays, d)
+	}
+
+	return r
+}
+
+// openFDCount returns the number of file descriptors this process has open.
+func openFDCount() int {
+	entries, err := os.ReadDir("/proc/self/fd")
+	So(err, ShouldBeNil)
+
+	return len(entries)
+}
+
+// goroutineStackContaining polls for up to timeout until no goroutine's stack
+// mentions name, returning the matching stack if one still does.
+func goroutineStackContaining(name string, timeout time.Duration) string {
+	buf := make([]byte, 1<<20)
+	deadline := time.Now().Add(timeout)
+
+	for {
+		stacks := strings.Split(string(buf[:runtime.Stack(buf, true)]), "\n\n")
+
+		i := slices.IndexFunc(stacks, func(stack string) bool {
+			return strings.Contains(stack, name)
+		})
+		if i == -1 {
+			return ""
+		}
+
+		if time.Now().After(deadline) {
+			return stacks[i]
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func realBackfillTest(client Scroller, config Config, from time.Time, period time.Duration) {
@@ -311,4 +478,298 @@ func updateFirstLastHitTimestamp(result *es.Result, first, last *time.Time) {
 			*last = t
 		}
 	}
+}
+
+// dayHitIDs returns the sorted IDs of the hits a new DB finds for bom between
+// gte and lt.
+func dayHitIDs(config Config, bom, gte, lt string) []string {
+	ldb, err := New(config, true)
+	So(err, ShouldBeNil)
+
+	query := rangeQuery(mustParseTime(gte), mustParseTime(lt))
+	query.Query.Bool.Filter = append(query.Query.Bool.Filter,
+		map[string]es.MapStringStringOrMap{"match_phrase": map[string]interface{}{"BOM": bom}})
+
+	result, err := ldb.Scroll(query)
+	So(err, ShouldBeNil)
+
+	ids := make([]string, 0, len(result.HitSet.Hits))
+	for _, hit := range result.HitSet.Hits {
+		ids = append(ids, hit.ID)
+	}
+
+	slices.Sort(ids)
+
+	return ids
+}
+
+func mustParseTime(s string) time.Time {
+	t, err := time.Parse(time.RFC3339, s)
+	So(err, ShouldBeNil)
+
+	return t
+}
+
+// failingScroller is a Scroller whose Scroll sends no hits, and returns err
+// for the day starting at failGTE but succeeds for other days.
+type failingScroller struct {
+	failGTE string
+	err     error
+}
+
+func (f failingScroller) Scroll(query *es.Query, _ es.HitsCallBack) (*es.Result, error) {
+	if query.Query.Bool.Filter[1]["range"].GetMapString("timestamp", "gte") == f.failGTE {
+		return nil, f.err
+	}
+
+	return &es.Result{}, nil
+}
+
+// flakyScroller is a Scroller that, for each day whose gte is a key of
+// failures, sends one hit for partialBOM and then fails that day's first n attempts
+// (all of them when n is negative), before sending goodHits hits. For each day
+// whose gte is in storeRejects, it instead sends one hit for partialBOM and
+// then a hit with a user name too long for DB.Store to accept. It counts
+// attempts per day.
+type flakyScroller struct {
+	failures     map[string]int
+	storeRejects []string
+	goodHits     int
+
+	mu       sync.Mutex
+	attempts map[string]int
+}
+
+func (f *flakyScroller) Scroll(query *es.Query, cb es.HitsCallBack) (*es.Result, error) {
+	gte := query.Query.Bool.Filter[1]["range"].GetMapString("timestamp", "gte")
+
+	f.mu.Lock()
+	if f.attempts == nil {
+		f.attempts = make(map[string]int)
+	}
+
+	f.attempts[gte]++
+	attempt := f.attempts[gte]
+	f.mu.Unlock()
+
+	day, err := time.Parse(time.RFC3339, gte)
+	if err != nil {
+		return nil, err
+	}
+
+	ts := day.Add(12 * time.Hour).Unix()
+	hit := func(id, bom string) *es.Hit {
+		return &es.Hit{ID: id, Details: &es.Details{ID: id, Timestamp: ts, BOM: bom, UserName: "user"}}
+	}
+
+	if slices.Contains(f.storeRejects, gte) {
+		cb(hit("partial-"+strconv.Itoa(attempt), partialBOM))
+
+		bad := hit("bad-"+strconv.Itoa(attempt), goodBOM)
+		bad.Details.UserName = strings.Repeat("u", userNameWidth+1)
+		cb(bad)
+
+		return &es.Result{}, nil
+	}
+
+	if n, ok := f.failures[gte]; ok && (n < 0 || attempt <= n) {
+		cb(hit("partial-"+strconv.Itoa(attempt), partialBOM))
+
+		return nil, fmt.Errorf("scroll page 1: read response body: %w", io.ErrUnexpectedEOF)
+	}
+
+	for i := range f.goodHits {
+		cb(hit("good-"+strconv.Itoa(i), goodBOM))
+	}
+
+	return &es.Result{}, nil
+}
+
+func (f *flakyScroller) attemptsFor(gte string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.attempts[gte]
+}
+
+func TestBackfillRetries(t *testing.T) {
+	from := time.Date(2024, 6, 1, 0, 30, 0, 0, time.UTC)
+	day30, day31 := "2024-05-30T00:00:00Z", "2024-05-31T00:00:00Z"
+	day29, dayEnd := "2024-05-29T00:00:00Z", "2024-06-01T00:00:00Z"
+	goodIDs := []string{"good-0", "good-1", "good-2"}
+
+	Convey("Given a scroller that fails a day's first attempts, Backfill() retries that day "+
+		"with a doubling delay and stores only the successful attempt's hits", t, func() {
+		sleeps := recordRetrySleeps()
+		logs := captureLogs()
+		scroller := &flakyScroller{failures: map[string]int{day31: 3}, goodHits: 3}
+		config := Config{Directory: t.TempDir()}
+
+		err := Backfill(scroller, config, from, oneDay)
+		So(err, ShouldBeNil)
+
+		So(scroller.attemptsFor(day31), ShouldEqual, 4)
+		So(scroller.attemptsFor(day30), ShouldEqual, 1)
+		So(sleeps.recorded(), ShouldResemble, []time.Duration{time.Minute, 2 * time.Minute, 4 * time.Minute})
+
+		So(dayHitIDs(config, goodBOM, day31, dayEnd), ShouldResemble, goodIDs)
+		So(dayHitIDs(config, partialBOM, day31, dayEnd), ShouldBeEmpty)
+		So(dayHitIDs(config, goodBOM, day30, day31), ShouldResemble, goodIDs)
+
+		logged := logs.String()
+		So(strings.Count(logged, "level=WARN"), ShouldEqual, 3)
+
+		for attempt, delay := range []string{"1m0s", "2m0s", "4m0s"} {
+			So(logged, ShouldContainSubstring, "gte="+day31+" lt="+dayEnd+" attempt="+strconv.Itoa(attempt+1)+
+				` err="query elasticsearch: scroll page 1: read response body: unexpected EOF" retry_in=`+delay)
+		}
+	})
+
+	Convey("Given a scroller that always fails one day, Backfill() gives up on that day after 12 attempts "+
+		"but completes the other day", t, func() {
+		sleeps := recordRetrySleeps()
+		logs := captureLogs()
+		scroller := &flakyScroller{failures: map[string]int{day31: -1}, goodHits: 3}
+		config := Config{Directory: t.TempDir()}
+
+		err := Backfill(scroller, config, from, oneDay)
+		So(err, ShouldWrap, io.ErrUnexpectedEOF)
+		So(err.Error(), ShouldEqual, "day "+day31+".."+dayEnd+": gave up after 12 attempts: "+
+			"query elasticsearch: scroll page 1: read response body: unexpected EOF")
+
+		So(scroller.attemptsFor(day31), ShouldEqual, 12)
+		So(sleeps.recorded(), ShouldResemble, []time.Duration{
+			time.Minute, 2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 16 * time.Minute, 32 * time.Minute,
+			time.Hour, time.Hour, time.Hour, time.Hour, time.Hour,
+		})
+		So(strings.Count(logs.String(), "level=WARN"), ShouldEqual, 11)
+
+		_, err = os.Stat(filepath.Join(config.Directory, "2024", "05", "31"))
+		So(err, ShouldWrap, os.ErrNotExist)
+		So(dayHitIDs(config, partialBOM, day31, dayEnd), ShouldBeEmpty)
+
+		_, err = os.Stat(filepath.Join(config.Directory, "2024", "05", "30", successBasename))
+		So(err, ShouldBeNil)
+		So(dayHitIDs(config, goodBOM, day30, day31), ShouldResemble, goodIDs)
+	})
+
+	Convey("Given a scroller whose hits Store rejects for one day, Backfill() fails that day on its "+
+		"first attempt without retrying or keeping partial data, but completes the other day", t, func() {
+		sleeps := recordRetrySleeps()
+		logs := captureLogs()
+		scroller := &flakyScroller{storeRejects: []string{day31}, goodHits: 3}
+		config := Config{Directory: t.TempDir()}
+
+		err := Backfill(scroller, config, from, oneDay)
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldEqual, "day "+day31+".."+dayEnd+": store locally: "+ErrFieldTooLong+": '"+
+			strings.Repeat("u", userNameWidth+1)+"' is > "+strconv.Itoa(userNameWidth)+" characters")
+
+		var dbErr Error
+
+		So(errors.As(err, &dbErr), ShouldBeTrue)
+		So(dbErr.Msg, ShouldEqual, ErrFieldTooLong)
+
+		So(scroller.attemptsFor(day31), ShouldEqual, 1)
+		So(sleeps.recorded(), ShouldBeEmpty)
+		So(logs.String(), ShouldNotContainSubstring, "level=WARN")
+
+		_, err = os.Stat(filepath.Join(config.Directory, "2024", "05", "31"))
+		So(err, ShouldWrap, os.ErrNotExist)
+
+		_, err = os.Stat(filepath.Join(config.Directory, "2024", "05", "30", successBasename))
+		So(err, ShouldBeNil)
+		So(dayHitIDs(config, goodBOM, day30, day31), ShouldResemble, goodIDs)
+	})
+
+	Convey("Given a scroller that always fails two days, Backfill() reports both days "+
+		"and completes the third", t, func() {
+		recordRetrySleeps()
+		captureLogs()
+
+		scroller := &flakyScroller{failures: map[string]int{day29: -1, day31: -1}, goodHits: 3}
+		config := Config{Directory: t.TempDir()}
+
+		err := Backfill(scroller, config, from, 2*oneDay)
+		So(err, ShouldWrap, io.ErrUnexpectedEOF)
+
+		cause := ": gave up after 12 attempts: query elasticsearch: scroll page 1: read response body: unexpected EOF"
+		So(err.Error(), ShouldEqual, "day "+day29+".."+day30+cause+"\nday "+day31+".."+dayEnd+cause)
+
+		So(scroller.attemptsFor(day29), ShouldEqual, 12)
+		So(scroller.attemptsFor(day31), ShouldEqual, 12)
+		So(dayHitIDs(config, goodBOM, day30, day31), ShouldResemble, goodIDs)
+	})
+
+	if os.Geteuid() == 0 {
+		SkipConvey("Skipping unremovable stale day test when running as root", t, func() {})
+
+		return
+	}
+
+	Convey("Given a stale incomplete day that can't be removed, Backfill() reports that day "+
+		"without querying it, but completes the other day", t, func() {
+		recordRetrySleeps()
+
+		dayJune1, dayJune2 := dayEnd, "2024-06-02T00:00:00Z"
+		scroller := &flakyScroller{goodHits: 3}
+		config := Config{Directory: t.TempDir()}
+		monthDir := filepath.Join(config.Directory, "2024", "05")
+
+		err := os.MkdirAll(filepath.Join(monthDir, "31"), dbDirPerms)
+		So(err, ShouldBeNil)
+
+		Reset(func() { os.Chmod(monthDir, dbDirPerms) }) //nolint:errcheck
+
+		err = os.Chmod(monthDir, 0o555)
+		So(err, ShouldBeNil)
+
+		err = Backfill(scroller, config, mustParseTime(dayJune2).Add(30*time.Minute), oneDay)
+		So(err, ShouldWrap, os.ErrPermission)
+		So(err.Error(), ShouldStartWith, "day "+day31+".."+dayJune1+": ")
+
+		So(scroller.attemptsFor(day31), ShouldEqual, 0)
+		So(scroller.attemptsFor(dayJune1), ShouldEqual, 1)
+		So(dayHitIDs(config, goodBOM, dayJune1, dayJune2), ShouldResemble, goodIDs)
+	})
+}
+
+// captureLogs sends the default slog logger's output to the returned builder
+// for the current Convey.
+func captureLogs() *strings.Builder {
+	var b strings.Builder
+
+	orig := slog.Default()
+
+	Reset(func() { slog.SetDefault(orig) })
+
+	slog.SetDefault(slog.New(slog.NewTextHandler(&lockedWriter{w: &b}, nil)))
+
+	return &b
+}
+
+// sleepRecorder replaces the backfill retry sleep for the current Convey,
+// recording each requested delay instead of waiting.
+type sleepRecorder struct {
+	mu     sync.Mutex
+	delays []time.Duration
+}
+
+func (r *sleepRecorder) recorded() []time.Duration {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return slices.Clone(r.delays)
+}
+
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return l.w.Write(p)
 }

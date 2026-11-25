@@ -90,6 +90,8 @@ func (c *Client) Info() (*ElasticInfo, error) {
 		return nil, err
 	}
 
+	defer resp.Body.Close()
+
 	info := &ElasticInfo{}
 
 	err = json.NewDecoder(resp.Body).Decode(info)
@@ -135,12 +137,12 @@ func (c *Client) Scroll(query *Query, cb HitsCallBack) (*Result, error) {
 		c.client.Search.WithScroll(scrollTime),
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("initial search: %w", err)
 	}
 
 	result, n, err := parseResultResponse(resp, cb)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("initial search: %w", err)
 	}
 
 	defer c.scrollCleanup(result)
@@ -158,10 +160,14 @@ func (c *Client) scrollCleanup(result *Result) {
 		return
 	}
 
-	_, err = c.client.ClearScroll(c.client.ClearScroll.WithBody(scrollIDBody))
+	resp, err := c.client.ClearScroll(c.client.ClearScroll.WithBody(scrollIDBody))
 	if err != nil {
 		c.Error = err
+
+		return
 	}
+
+	resp.Body.Close()
 }
 
 func scrollIDBody(scrollID string) (*bytes.Buffer, error) {
@@ -179,10 +185,14 @@ func (c *Client) scrollUntilAllHitsReceived(result *Result, previousNumHits int,
 		return nil
 	}
 
+	page := 0
+
 	for keepScrolling := true; keepScrolling; keepScrolling = previousNumHits < total {
+		page++
+
 		n, err := c.scroll(result, cb)
 		if err != nil {
-			return err
+			return fmt.Errorf("scroll page %d after %d of %d hits: %w", page, previousNumHits, total, err)
 		}
 
 		if n == 0 {
